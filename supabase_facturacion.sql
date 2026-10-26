@@ -33,7 +33,7 @@ $$;
 -- Consecutivos por empresa, tipo y año (sin huecos por concurrencia)
 create table if not exists fac_consecutivos (
   empresa_id uuid not null references fac_empresas(id) on delete cascade,
-  tipo text not null check (tipo in ('COT','FE','AB','CLI')),
+  tipo text not null check (tipo in ('PRE','FAC','REC','CLI'))  -- presupuesto, factura, recibo de cobro, cliente,
   anio int not null,
   ultimo int not null default 0,
   primary key (empresa_id, tipo, anio)
@@ -55,13 +55,13 @@ create table if not exists fac_clientes (
   id uuid primary key default gen_random_uuid(),
   empresa_id uuid not null default fac_mi_empresa() references fac_empresas(id) on delete cascade,
   codigo text not null,
-  tipo_persona text not null check (tipo_persona in ('Natural','Jurídica')),
+  tipo_persona text not null check (tipo_persona in ('Física','Jurídica')),
   razon_social text not null,
   nombre_comercial text not null,
   nit text not null,
   telefono text, celular text,
   email text not null,
-  direccion text not null, ciudad text not null, departamento text not null, pais text not null default 'Colombia',
+  direccion text not null, ciudad text not null, departamento text not null /* provincia */, codigo_postal text, pais text not null default 'España',
   contacto text not null, cargo_contacto text not null,
   observaciones text,
   creado timestamptz not null default now(),
@@ -98,7 +98,7 @@ create table if not exists fac_plantilla_versiones (
   primary key (plantilla_id, version)
 );
 
--- ---------- Cotizaciones ----------
+-- ---------- Cotizaciones (presupuestos) ----------
 create table if not exists fac_cotizaciones (
   id uuid primary key default gen_random_uuid(),
   empresa_id uuid not null default fac_mi_empresa() references fac_empresas(id) on delete cascade,
@@ -110,7 +110,7 @@ create table if not exists fac_cotizaciones (
   cliente_id uuid not null references fac_clientes(id),
   validez text, forma_pago text, tiempo_ejecucion text, observaciones text,
   responsable text,
-  estado text not null default 'Borrador' check (estado in ('Borrador','Enviada','Aprobada','Facturada','Anulada')),
+  estado text not null default 'Borrador' check (estado in ('Borrador','Enviado','Aprobado','Facturado','Anulado')),
   plantilla_id uuid, plantilla_version int,
   firmas jsonb not null default '{}'::jsonb,   -- {emisor:{img_url,nombre,fecha,usuario}, cliente:{...}}
   creado timestamptz not null default now(),
@@ -131,7 +131,7 @@ create table if not exists fac_facturas (
   vence date,
   cliente_id uuid not null references fac_clientes(id),
   cotizacion_id uuid references fac_cotizaciones(id),
-  metodo_pago text check (metodo_pago in ('Transferencia','Efectivo','Tarjeta','PSE','Consignación')),
+  metodo_pago text check (metodo_pago in ('Transferencia','Bizum','Tarjeta','Domiciliación','Efectivo')),
   banco text, titular text, cuenta text, observaciones text,
   estado text not null default 'Emitida' check (estado in ('Emitida','Anulada')),  -- Pendiente/En Proceso/Pagada/Vencida se calculan (vista)
   plantilla_id uuid, plantilla_version int,
@@ -155,13 +155,13 @@ create table if not exists fac_lineas (
   cantidad numeric(14,4) not null check (cantidad >= 0),
   valor_unitario numeric(16,2) not null check (valor_unitario >= 0),
   descuento_pct numeric(5,2) not null default 0 check (descuento_pct between 0 and 100),
-  iva_pct numeric(5,2) not null default 19 check (iva_pct between 0 and 100),
+  iva_pct numeric(5,2) not null default 21 check (iva_pct between 0 and 100),
   subtotal numeric(16,2) generated always as (round(cantidad * valor_unitario * (1 - descuento_pct / 100), 2)) stored,
   total_linea numeric(16,2) generated always as (round(cantidad * valor_unitario * (1 - descuento_pct / 100) * (1 + iva_pct / 100), 2)) stored,
   check ((cotizacion_id is null) <> (factura_id is null))
 );
 
--- ---------- Abonos ----------
+-- ---------- Abonos (cobros / pagos a cuenta) ----------
 create table if not exists fac_abonos (
   id uuid primary key default gen_random_uuid(),
   empresa_id uuid not null default fac_mi_empresa() references fac_empresas(id) on delete cascade,
@@ -172,7 +172,7 @@ create table if not exists fac_abonos (
   factura_id uuid references fac_facturas(id),
   concepto text not null,
   referencia text,
-  forma_pago text not null check (forma_pago in ('Transferencia','Efectivo','Tarjeta','PSE','Consignación')),
+  forma_pago text not null check (forma_pago in ('Transferencia','Bizum','Tarjeta','Domiciliación','Efectivo')),
   banco text,
   valor numeric(16,2) not null check (valor > 0),
   estado text not null default 'Aplicado' check (estado in ('Aplicado','Anulado')),
@@ -184,12 +184,12 @@ create table if not exists fac_abonos (
   check (cotizacion_id is not null or factura_id is not null)
 );
 
--- Al facturar una cotización, sus anticipos pasan a la factura
+-- Al facturar un presupuesto, sus anticipos pasan a la factura
 create or replace function fac_trasladar_abonos() returns trigger language plpgsql as $$
 begin
   if new.cotizacion_id is not null and new.estado = 'Emitida' then
     update fac_abonos set factura_id = new.id where cotizacion_id = new.cotizacion_id and estado = 'Aplicado' and factura_id is null;
-    update fac_cotizaciones set estado = 'Facturada' where id = new.cotizacion_id;
+    update fac_cotizaciones set estado = 'Facturado' where id = new.cotizacion_id;
   end if;
   return new;
 end $$;
