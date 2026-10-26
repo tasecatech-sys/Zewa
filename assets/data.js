@@ -11,9 +11,9 @@ const USERS = [
   { id: 'contable', nombre: 'Carlos Ruiz', rol: 'Contabilidad' },
 ];
 
-const ESTADOS_COT = ['Borrador', 'Enviada', 'Aprobada', 'Facturada', 'Vencida', 'Anulada'];
-const FORMAS_PAGO = ['Transferencia', 'Efectivo', 'Tarjeta', 'PSE', 'Consignación'];
-const BANCOS = ['Bancolombia', 'Davivienda', 'Banco de Bogotá', 'BBVA', 'Banco de Occidente', 'Nequi', 'Daviplata'];
+const ESTADOS_COT = ['Borrador', 'Enviado', 'Aprobado', 'Facturado', 'Vencido', 'Anulado'];
+const FORMAS_PAGO = ['Transferencia', 'Bizum', 'Tarjeta', 'Domiciliación', 'Efectivo'];
+const BANCOS = ['CaixaBank', 'Banco Santander', 'BBVA', 'Banco Sabadell', 'Bankinter', 'ING', 'Unicaja', 'Kutxabank', 'Abanca', 'Ibercaja'];
 const BLOQUES = {
   encabezado: 'Encabezado y logo',
   cliente: 'Datos del cliente',
@@ -21,7 +21,7 @@ const BLOQUES = {
   detalle: 'Detalle de conceptos',
   totales: 'Totales',
   condiciones: 'Condiciones comerciales',
-  abonos: 'Abonos aplicados',
+  abonos: 'Pagos a cuenta',
   banco: 'Datos bancarios',
   notas: 'Observaciones',
   firma: 'Firmas',
@@ -34,22 +34,20 @@ const todayISO = () => new Date().toISOString().slice(0, 10);
 const addDays = (iso, n) => { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
 const daysBetween = (a, b) => Math.round((new Date(b + 'T12:00:00') - new Date(a + 'T12:00:00')) / 86400000);
 const MONEDAS = {
-  COP: { code: 'COP', locale: 'es-CO', dec: 0, simbolo: '$', nombre: 'Peso colombiano (COP)' },
   EUR: { code: 'EUR', locale: 'es-ES', dec: 2, simbolo: '€', nombre: 'Euro (EUR)' },
+  COP: { code: 'COP', locale: 'es-CO', dec: 0, simbolo: '$', nombre: 'Peso colombiano (COP)' },
   USD: { code: 'USD', locale: 'en-US', dec: 2, simbolo: 'US$', nombre: 'Dólar (USD)' },
   MXN: { code: 'MXN', locale: 'es-MX', dec: 2, simbolo: '$', nombre: 'Peso mexicano (MXN)' },
 };
-const moneda = () => MONEDAS[(typeof DB !== 'undefined' && DB?.empresa?.moneda) || 'COP'] || MONEDAS.COP;
+const moneda = () => MONEDAS[(typeof DB !== 'undefined' && DB?.empresa?.moneda) || 'EUR'] || MONEDAS.EUR;
 const fmtMoney = (n) => { const m = moneda(); return new Intl.NumberFormat(m.locale, { style: 'currency', currency: m.code, minimumFractionDigits: m.dec, maximumFractionDigits: m.dec }).format(+n || 0); };
 const fmtShort = (n) => {
-  const a = Math.abs(n);
-  if (a >= 1e9) return moneda().simbolo + (n / 1e9).toFixed(1).replace('.', ',') + ' mil M';
-  if (a >= 1e6) return moneda().simbolo + (n / 1e6).toFixed(1).replace('.', ',') + ' M';
-  if (a >= 1e3) return moneda().simbolo + Math.round(n / 1e3) + ' mil';
-  return moneda().simbolo + Math.round(n);
+  const a = Math.abs(n), m = moneda();
+  const v = a >= 1e9 ? (n / 1e9).toFixed(1).replace('.', ',') + ' mil M' : a >= 1e6 ? (n / 1e6).toFixed(1).replace('.', ',') + ' M' : a >= 1e3 ? Math.round(n / 1e3) + ' mil' : String(Math.round(n));
+  return m.code === 'EUR' ? `${v} €` : m.simbolo + v; // en España el símbolo va detrás
 };
-const fmtDate = (iso) => iso ? new Date(iso.length > 10 ? iso : iso + 'T12:00:00').toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
-const fmtDateTime = (iso) => iso ? new Date(iso).toLocaleString('es-CO', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
+const fmtDate = (iso) => iso ? new Date(iso.length > 10 ? iso : iso + 'T12:00:00').toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
+const fmtDateTime = (iso) => iso ? new Date(iso).toLocaleString('es-ES', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const norm = (s) => String(s ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
 const clone = (o) => JSON.parse(JSON.stringify(o));
@@ -60,7 +58,8 @@ const Store = {
   load() {
     try { DB = JSON.parse(localStorage.getItem(DB_KEY)); } catch (e) { DB = null; }
     if (!DB || !DB.version) { DB = seed(); this.save(); }
-    DB.empresa = { moneda: 'COP', ivaDefault: 19, pais: 'Colombia', codigoPostal: '', provincia: '', ...DB.empresa };
+    DB.empresa = { moneda: 'EUR', ivaDefault: 21, pais: 'España', codigoPostal: '', provincia: '', ...DB.empresa };
+    migrarLexicoES(DB); this.save();
     return DB;
   },
   save() {
@@ -71,11 +70,26 @@ const Store = {
   user() { return USERS.find((u) => u.id === DB.usuarioActual) || USERS[0]; },
   nextNumber(tipo) {
     const year = new Date().getFullYear();
-    const pref = { COT: 'COT', FAC: 'FE', ABO: 'AB', CLI: 'CLI' }[tipo];
+    const pref = { COT: 'PRE', FAC: 'FAC', ABO: 'REC', CLI: 'CLI' }[tipo];
     DB.seq[tipo] = (DB.seq[tipo] || 0) + 1;
     return tipo === 'CLI' ? `${pref}-${String(DB.seq[tipo]).padStart(4, '0')}` : `${pref}-${year}-${String(DB.seq[tipo]).padStart(4, '0')}`;
   },
 };
+
+/* ---------- migración al léxico de España (datos guardados antes del cambio) ---------- */
+function migrarLexicoES(db) {
+  if (db.lexico === 'es-ES') return;
+  const EST = { Enviada: 'Enviado', Aprobada: 'Aprobado', Facturada: 'Facturado', Vencida: 'Vencido', Anulada: 'Anulado' };
+  (db.cotizaciones || []).forEach((c) => { if (EST[c.estado]) c.estado = EST[c.estado]; });
+  (db.clientes || []).forEach((c) => { if (c.tipo === 'Natural') c.tipo = 'Física'; });
+  const ENT = { 'Cotización': 'Presupuesto', Abono: 'Cobro' };
+  (db.auditoria || []).forEach((a) => { if (ENT[a.entidad]) a.entidad = ENT[a.entidad]; });
+  const TPL = { 'Cotización corporativa': 'Presupuesto corporativo', 'Recibo de abono': 'Recibo de pago', 'Cotización minimal (verde)': 'Presupuesto minimalista (verde)' };
+  (db.plantillas || []).forEach((p) => { if (TPL[p.nombre]) p.nombre = TPL[p.nombre]; });
+  const CAT = { 'Soporte de pago': 'Justificante de pago', 'Orden de compra': 'Pedido' };
+  (db.documentos || []).forEach((d) => { if (CAT[d.categoria]) d.categoria = CAT[d.categoria]; });
+  db.lexico = 'es-ES';
+}
 
 /* ---------- auditoría ---------- */
 function diffObjects(a, b, ignore = ['items', 'firma', 'actualizado', 'versiones']) {
@@ -133,11 +147,11 @@ function facturaEstado(f) {
   return 'Pendiente';
 }
 function cotEstado(c) {
-  if (['Anulada', 'Facturada'].includes(c.estado)) return c.estado;
-  if (c.vence && c.vence < todayISO() && c.estado !== 'Aprobada') return 'Vencida';
+  if (['Anulado', 'Facturado'].includes(c.estado)) return c.estado;
+  if (c.vence && c.vence < todayISO() && c.estado !== 'Aprobado') return 'Vencido';
   return c.estado;
 }
-/* Control financiero de un proyecto (cotización → abonos → factura) */
+/* Control financiero de un proyecto (presupuesto → cobros → factura) */
 function proyectoResumen(cot) {
   const total = docTotals(cot.items).total;
   const fac = cot.facturaId ? getFac(cot.facturaId) : null;
@@ -165,9 +179,9 @@ function defaultTemplateConfig(tipo) {
   }[tipo];
   return {
     color: '#1d4ed8', color2: '#0f172a', fuente: 'Inter', logo: '',
-    encabezado: 'TASECA S.A.S. · NIT 901.234.567-8\nCalle 100 # 15-20, Bogotá · +57 312 530 2674',
-    pie: 'Gracias por su confianza · www.taseca.tech · tasecatech@gmail.com',
-    firmaNombre: 'Andrés Barón', firmaCargo: 'Gerente General',
+    encabezado: 'ZEWÁ REFORMAS · NIF B00000000\nCalle Ejemplo, 1 · 28001 Madrid · 641 486 231',
+    pie: 'Gracias por su confianza · zewareformas@gmail.com · 641 486 231',
+    firmaNombre: 'ZEWÁ REFORMAS', firmaCargo: 'Gerencia',
     bloques: orden.map((k) => ({ k, on: true })),
     html: '', pdfBase: '',
     formato: 'diseno', docx: '', docxNombre: '',
@@ -179,79 +193,79 @@ function seed() {
   const now = new Date();
   const iso = (dOff) => { const d = new Date(now); d.setDate(d.getDate() + dOff); return d.toISOString().slice(0, 10); };
   const db = {
-    version: 1, usuarioActual: 'admin', seq: { COT: 0, FAC: 0, ABO: 0, CLI: 0 },
-    empresa: { razonSocial: 'TASECA S.A.S.', nit: '901.234.567-8', direccion: 'Calle 100 # 15-20', ciudad: 'Bogotá', codigoPostal: '110111', provincia: 'Cundinamarca', pais: 'Colombia', moneda: 'COP', ivaDefault: 19, telefono: '+57 312 530 2674', email: 'tasecatech@gmail.com', banco: 'Bancolombia', titular: 'TASECA S.A.S.', cuenta: 'Ahorros 123-456789-01' },
+    version: 1, lexico: 'es-ES', usuarioActual: 'admin', seq: { COT: 0, FAC: 0, ABO: 0, CLI: 0 },
+    empresa: { razonSocial: 'ZEWÁ REFORMAS', nit: 'B00000000', direccion: 'Calle Ejemplo, 1', ciudad: 'Madrid', codigoPostal: '28001', provincia: 'Madrid', pais: 'España', moneda: 'EUR', ivaDefault: 21, telefono: '641 486 231', email: 'zewareformas@gmail.com', banco: 'CaixaBank', titular: 'ZEWÁ REFORMAS', cuenta: 'ES00 0000 0000 0000 0000 0000' },
     clientes: [], cotizaciones: [], abonos: [], facturas: [], plantillas: [], documentos: [], auditoria: [],
   };
   DB = db;
-  const mkCli = (o) => { const c = { id: uid('cli'), codigo: Store.nextNumber('CLI'), pais: 'Colombia', creado: new Date(now - 200 * 864e5).toISOString(), creadoPor: 'Administrador', adjuntos: [], ...o }; db.clientes.push(c); return c; };
-  const c1 = mkCli({ tipo: 'Jurídica', razonSocial: 'Constructora Andina S.A.S.', nombreComercial: 'Andina Constructora', nit: '900.123.456-7', telefono: '601 745 2200', celular: '310 555 1020', email: 'compras@andina.co', direccion: 'Cra 7 # 72-41 Of. 502', ciudad: 'Bogotá', departamento: 'Cundinamarca', contacto: 'María Fernanda López', cargo: 'Jefe de Compras', observaciones: 'Cliente estratégico. Pago a 30 días.' });
-  const c2 = mkCli({ tipo: 'Jurídica', razonSocial: 'Café Origen Ltda.', nombreComercial: 'Café Origen', nit: '901.456.789-1', telefono: '604 322 1100', celular: '315 222 3344', email: 'admin@cafeorigen.co', direccion: 'Calle 10 # 40-22', ciudad: 'Medellín', departamento: 'Antioquia', contacto: 'Julián Restrepo', cargo: 'Gerente', observaciones: '3 sedes. Interesados en sistema para restaurantes.' });
-  const c3 = mkCli({ tipo: 'Natural', razonSocial: 'Natalia Torres Vargas', nombreComercial: 'Estudio NT Diseño', nit: '1.020.345.678', telefono: '', celular: '300 987 6543', email: 'natalia@estudiont.com', direccion: 'Av. 6N # 25-10', ciudad: 'Cali', departamento: 'Valle del Cauca', contacto: 'Natalia Torres', cargo: 'Propietaria', observaciones: '' });
-  const c4 = mkCli({ tipo: 'Jurídica', razonSocial: 'Clínica Dental Sonrisa S.A.S.', nombreComercial: 'Sonrisa Dental', nit: '900.987.654-3', telefono: '605 360 4400', celular: '318 444 5566', email: 'gerencia@sonrisadental.co', direccion: 'Cra 53 # 80-120', ciudad: 'Barranquilla', departamento: 'Atlántico', contacto: 'Dr. Ricardo Palacio', cargo: 'Director', observaciones: 'Usa Taseca Citas desde 2025.' });
-  const c5 = mkCli({ tipo: 'Jurídica', razonSocial: 'Logística Express del Caribe S.A.', nombreComercial: 'LogiExpress', nit: '890.111.222-5', telefono: '605 660 1200', celular: '311 000 7788', email: 'tesoreria@logiexpress.com', direccion: 'Zona Franca Bodega 14', ciudad: 'Cartagena', departamento: 'Bolívar', contacto: 'Paola Méndez', cargo: 'Tesorera', observaciones: '' });
-  const c6 = mkCli({ tipo: 'Natural', razonSocial: 'Jorge Iván Castaño', nombreComercial: 'JC Asesorías Contables', nit: '79.555.111', telefono: '', celular: '317 123 4567', email: 'jorge@jcasesorias.co', direccion: 'Calle 19 # 8-34', ciudad: 'Pereira', departamento: 'Risaralda', contacto: 'Jorge Castaño', cargo: 'Contador', observaciones: '' });
+  const mkCli = (o) => { const c = { id: uid('cli'), codigo: Store.nextNumber('CLI'), pais: 'España', creado: new Date(now - 200 * 864e5).toISOString(), creadoPor: 'Administrador', adjuntos: [], ...o }; db.clientes.push(c); return c; };
+  const c1 = mkCli({ tipo: 'Jurídica', razonSocial: 'Construcciones Levante S.L.', nombreComercial: 'Levante Obras', nit: 'B46123456', telefono: '963 52 14 20', celular: '612 345 678', email: 'compras@levanteobras.es', direccion: 'Av. del Puerto, 120, 3.º', codigoPostal: '46023', ciudad: 'Valencia', departamento: 'Valencia', contacto: 'María Fernanda López', cargo: 'Jefa de Compras', observaciones: 'Cliente estratégico. Pago a 30 días.' });
+  const c2 = mkCli({ tipo: 'Jurídica', razonSocial: 'Café Origen S.L.', nombreComercial: 'Café Origen', nit: 'B87654321', telefono: '914 22 11 00', celular: '622 223 344', email: 'admin@cafeorigen.es', direccion: 'Calle de Fuencarral, 45', codigoPostal: '28004', ciudad: 'Madrid', departamento: 'Madrid', contacto: 'Julián Restrepo', cargo: 'Gerente', observaciones: '3 locales. Interesados en reformar un local nuevo.' });
+  const c3 = mkCli({ tipo: 'Física', razonSocial: 'Natalia Torres Vargas', nombreComercial: 'Estudio NT Diseño', nit: '12345678Z', telefono: '', celular: '600 987 654', email: 'natalia@estudiont.es', direccion: 'Carrer d’Aragó, 210, 2.º 1.ª', codigoPostal: '08011', ciudad: 'Barcelona', departamento: 'Barcelona', contacto: 'Natalia Torres', cargo: 'Propietaria', observaciones: '' });
+  const c4 = mkCli({ tipo: 'Jurídica', razonSocial: 'Clínica Dental Sonrisa S.L.', nombreComercial: 'Sonrisa Dental', nit: 'B41987654', telefono: '954 36 04 40', celular: '618 444 556', email: 'gerencia@sonrisadental.es', direccion: 'Av. de la Constitución, 18', codigoPostal: '41001', ciudad: 'Sevilla', departamento: 'Sevilla', contacto: 'Dr. Ricardo Palacio', cargo: 'Director', observaciones: 'Cliente desde 2025.' });
+  const c5 = mkCli({ tipo: 'Jurídica', razonSocial: 'Logística Express del Norte S.A.', nombreComercial: 'LogiExpress', nit: 'A48111222', telefono: '944 66 12 00', celular: '611 000 778', email: 'tesoreria@logiexpress.es', direccion: 'Polígono Industrial Asua, Nave 14', codigoPostal: '48950', ciudad: 'Erandio', departamento: 'Bizkaia', contacto: 'Paola Méndez', cargo: 'Tesorera', observaciones: '' });
+  const c6 = mkCli({ tipo: 'Física', razonSocial: 'Jorge Iván Castaño', nombreComercial: 'JC Asesoría', nit: '79555111C', telefono: '', celular: '617 123 456', email: 'jorge@jcasesoria.es', direccion: 'Calle Larios, 8', codigoPostal: '29005', ciudad: 'Málaga', departamento: 'Málaga', contacto: 'Jorge Castaño', cargo: 'Asesor fiscal', observaciones: '' });
 
   ['cotizacion', 'factura', 'abono'].forEach((t) => {
     const cfg = defaultTemplateConfig(t);
-    db.plantillas.push({ id: uid('tpl'), tipo: t, nombre: { cotizacion: 'Cotización corporativa', factura: 'Factura estándar', abono: 'Recibo de abono' }[t], estado: 'Activa', creado: new Date(now - 180 * 864e5).toISOString(), creadoPor: 'Administrador', versiones: [{ version: 1, fecha: new Date(now - 180 * 864e5).toISOString(), usuario: 'Administrador', nota: 'Versión inicial', config: cfg }] });
+    db.plantillas.push({ id: uid('tpl'), tipo: t, nombre: { cotizacion: 'Presupuesto corporativo', factura: 'Factura estándar', abono: 'Recibo de pago' }[t], estado: 'Activa', creado: new Date(now - 180 * 864e5).toISOString(), creadoPor: 'Administrador', versiones: [{ version: 1, fecha: new Date(now - 180 * 864e5).toISOString(), usuario: 'Administrador', nota: 'Versión inicial', config: cfg }] });
   });
   const alt = defaultTemplateConfig('cotizacion');
   alt.color = '#0f766e'; alt.color2 = '#134e4a';
-  db.plantillas.push({ id: uid('tpl'), tipo: 'cotizacion', nombre: 'Cotización minimal (verde)', estado: 'Inactiva', creado: new Date(now - 60 * 864e5).toISOString(), creadoPor: 'Laura Gómez', versiones: [{ version: 1, fecha: new Date(now - 60 * 864e5).toISOString(), usuario: 'Laura Gómez', nota: 'Propuesta alternativa', config: alt }] });
+  db.plantillas.push({ id: uid('tpl'), tipo: 'cotizacion', nombre: 'Presupuesto minimalista (verde)', estado: 'Inactiva', creado: new Date(now - 60 * 864e5).toISOString(), creadoPor: 'Laura Gómez', versiones: [{ version: 1, fecha: new Date(now - 60 * 864e5).toISOString(), usuario: 'Laura Gómez', nota: 'Propuesta alternativa', config: alt }] });
 
   const svc = {
-    citas: { concepto: 'Taseca Citas – suscripción anual', descripcion: 'Agenda en línea, recordatorios y panel administrativo', cantidad: 12, valor: 100000, iva: 19, desc: 0 },
-    setup: { concepto: 'Implementación y configuración', descripcion: 'Parametrización, carga inicial de datos y capacitación', cantidad: 1, valor: 1500000, iva: 19, desc: 0 },
-    resto: { concepto: 'Sistema para Restaurantes – licencia mensual', descripcion: 'POS, inventario y reportes por sede', cantidad: 12, valor: 300000, iva: 19, desc: 10 },
-    medida: { concepto: 'Desarrollo a medida', descripcion: 'Automatización de procesos según levantamiento', cantidad: 1, valor: 8500000, iva: 19, desc: 0 },
-    curso: { concepto: 'Curso Excel / Power BI (4 clases)', descripcion: 'Grupo de hasta 8 personas', cantidad: 2, valor: 200000, iva: 0, desc: 0 },
-    soporte: { concepto: 'Bolsa de horas de soporte', descripcion: '20 horas, vigencia 6 meses', cantidad: 20, valor: 90000, iva: 19, desc: 5 },
+    demolicion: { concepto: 'Demolición y retirada de escombros', descripcion: 'Incluye contenedor y gestión de residuos', cantidad: 1, valor: 850, iva: 21, desc: 0 },
+    alicatado: { concepto: 'Alicatado (m²)', descripcion: 'Azulejo cerámico, material y mano de obra', cantidad: 24, valor: 38, iva: 21, desc: 0 },
+    fontaneria: { concepto: 'Instalación de fontanería', descripcion: 'Tomas de agua, desagües y sanitarios', cantidad: 1, valor: 1200, iva: 21, desc: 0 },
+    electricidad: { concepto: 'Instalación eléctrica', descripcion: 'Cableado, mecanismos y boletín', cantidad: 1, valor: 1600, iva: 21, desc: 0 },
+    pintura: { concepto: 'Pintura de paredes y techos (m²)', descripcion: 'Pintura plástica lisa, dos manos', cantidad: 120, valor: 9, iva: 21, desc: 0 },
+    cocina: { concepto: 'Montaje de cocina', descripcion: 'Muebles, encimera y electrodomésticos (mano de obra)', cantidad: 1, valor: 2400, iva: 21, desc: 5 },
   };
   const tplCot = plantillaActiva('cotizacion'), tplFac = plantillaActiva('factura'), tplAbo = plantillaActiva('abono');
   const mkCot = (cli, off, proyecto, items, estado, extra = {}) => {
-    const c = { id: uid('cot'), numero: Store.nextNumber('COT'), fecha: iso(off), vence: iso(off + 30), proyecto, descripcion: `Propuesta comercial para ${proyecto.toLowerCase()}.`, clienteId: cli.id, items: items.map(clone), validez: '30 días', formaPago: '50% anticipo, 50% contra entrega', tiempoEjecucion: '4 semanas', observaciones: 'Precios en pesos colombianos. Incluye soporte durante el primer mes.', responsable: 'Laura Gómez', estado, plantilla: tplCot, firma: '', facturaId: null, creado: new Date(now.getTime() + off * 864e5).toISOString(), creadoPor: 'Laura Gómez', ...extra };
+    const c = { id: uid('cot'), numero: Store.nextNumber('COT'), fecha: iso(off), vence: iso(off + 30), proyecto, descripcion: `Presupuesto para ${proyecto.toLowerCase()}.`, clienteId: cli.id, items: items.map(clone), validez: '30 días', formaPago: '50% a la aceptación, 50% a la finalización', tiempoEjecucion: '4 semanas', observaciones: 'Precios en euros. Incluye retirada de escombros y limpieza final de obra.', responsable: 'Laura Gómez', estado, plantilla: tplCot, firma: '', facturaId: null, creado: new Date(now.getTime() + off * 864e5).toISOString(), creadoPor: 'Laura Gómez', ...extra };
     db.cotizaciones.push(c); return c;
   };
   const mkFac = (cot, off, venceDias = 30) => {
-    const f = { id: uid('fac'), numero: Store.nextNumber('FAC'), fecha: iso(off), fechaOperacion: iso(off), vence: iso(off + venceDias), clienteId: cot.clienteId, cotizacionId: cot.id, items: clone(cot.items), metodoPago: 'Transferencia', banco: db.empresa.banco, titular: db.empresa.titular, cuenta: db.empresa.cuenta, observaciones: 'Favor referenciar el número de factura en el pago.', estado: 'Emitida', plantilla: tplFac, creado: new Date(now.getTime() + off * 864e5).toISOString(), creadoPor: 'Carlos Ruiz' };
-    cot.estado = 'Facturada'; cot.facturaId = f.id; db.facturas.push(f);
+    const f = { id: uid('fac'), numero: Store.nextNumber('FAC'), fecha: iso(off), fechaOperacion: iso(off), vence: iso(off + venceDias), clienteId: cot.clienteId, cotizacionId: cot.id, items: clone(cot.items), metodoPago: 'Transferencia', banco: db.empresa.banco, titular: db.empresa.titular, cuenta: db.empresa.cuenta, observaciones: 'Por favor, indique el número de factura en el concepto de la transferencia.', estado: 'Emitida', plantilla: tplFac, creado: new Date(now.getTime() + off * 864e5).toISOString(), creadoPor: 'Carlos Ruiz' };
+    cot.estado = 'Facturado'; cot.facturaId = f.id; db.facturas.push(f);
     db.abonos.filter((a) => a.cotizacionId === cot.id).forEach((a) => { a.facturaId = f.id; });
     return f;
   };
-  const mkAbo = (cot, off, pct, concepto, forma = 'Transferencia', banco = 'Bancolombia') => {
+  const mkAbo = (cot, off, pct, concepto, forma = 'Transferencia', banco = 'CaixaBank') => {
     const total = docTotals(cot.items).total;
-    const a = { id: uid('abo'), numero: Store.nextNumber('ABO'), fecha: iso(off), cotizacionId: cot.id, facturaId: cot.facturaId || null, clienteId: cot.clienteId, concepto, referencia: 'OP' + Math.floor(1e7 + Math.random() * 9e7), formaPago: forma, banco, valor: Math.round(total * pct), estado: 'Aplicado', plantilla: tplAbo, creado: new Date(now.getTime() + off * 864e5).toISOString(), creadoPor: 'Carlos Ruiz' };
+    const a = { id: uid('abo'), numero: Store.nextNumber('ABO'), fecha: iso(off), cotizacionId: cot.id, facturaId: cot.facturaId || null, clienteId: cot.clienteId, concepto, referencia: 'OP' + Math.floor(1e7 + Math.random() * 9e7), formaPago: forma, banco, valor: Math.round(total * pct * 100) / 100, estado: 'Aplicado', plantilla: tplAbo, creado: new Date(now.getTime() + off * 864e5).toISOString(), creadoPor: 'Carlos Ruiz' };
     db.abonos.push(a); return a;
   };
 
   // Historia de ~6 meses
-  let k = mkCot(c1, -170, 'Agenda de obra y visitas', [svc.citas, svc.setup], 'Aprobada'); mkAbo(k, -165, .5, 'Anticipo 50%'); mkFac(k, -150); mkAbo(k, -135, .5, 'Pago final');
-  k = mkCot(c2, -150, 'POS para 3 sedes', [{ ...svc.resto, cantidad: 36 }, svc.setup], 'Aprobada'); mkAbo(k, -145, .4, 'Anticipo 40%'); mkFac(k, -120); mkAbo(k, -100, .3, 'Segundo pago'); mkAbo(k, -80, .3, 'Pago final', 'PSE');
-  k = mkCot(c4, -130, 'Ampliación Taseca Citas', [svc.citas, svc.soporte], 'Aprobada'); mkFac(k, -115); mkAbo(k, -95, 1, 'Pago total', 'Consignación', 'Davivienda');
-  k = mkCot(c5, -110, 'Automatización de despachos', [svc.medida, svc.soporte], 'Aprobada'); mkAbo(k, -105, .5, 'Anticipo 50%', 'Transferencia', 'BBVA'); mkFac(k, -70, 45); mkAbo(k, -40, .25, 'Abono parcial', 'Transferencia', 'BBVA');
-  k = mkCot(c6, -95, 'Capacitación Power BI', [svc.curso], 'Aprobada'); mkFac(k, -88, 15); mkAbo(k, -86, 1, 'Pago total', 'Tarjeta', 'Banco de Bogotá');
-  k = mkCot(c3, -80, 'Portafolio y cotizador web', [{ ...svc.medida, valor: 3200000 }], 'Anulada');
-  k = mkCot(c1, -60, 'Tablero de control de obras', [svc.medida, svc.curso], 'Aprobada'); mkAbo(k, -55, .3, 'Anticipo 30%'); mkFac(k, -40, 20);
-  k = mkCot(c2, -45, 'Curso de inventarios en Excel', [{ ...svc.curso, cantidad: 3 }], 'Aprobada'); mkFac(k, -30); mkAbo(k, -12, 1, 'Pago total', 'PSE');
-  k = mkCot(c4, -28, 'Recordatorios por WhatsApp', [{ ...svc.medida, valor: 2400000 }, svc.soporte], 'Aprobada'); mkAbo(k, -20, .5, 'Anticipo 50%', 'Transferencia', 'Davivienda'); mkFac(k, -5);
-  k = mkCot(c5, -20, 'Bolsa de soporte 2026-II', [svc.soporte], 'Enviada'); k.vence = iso(4);
-  k = mkCot(c6, -10, 'Licencia Taseca Citas', [svc.citas, svc.setup], 'Enviada'); k.vence = iso(6);
-  k = mkCot(c3, -5, 'Rediseño de catálogo', [{ ...svc.medida, valor: 4100000 }], 'Borrador');
-  k = mkCot(c2, -50, 'Sede nueva – POS', [{ ...svc.resto, cantidad: 12 }], 'Enviada');
-  k = mkCot(c1, -3, 'Soporte anual obras', [svc.soporte, svc.citas], 'Enviada'); k.vence = iso(27);
+  let k = mkCot(c1, -170, 'Reforma de oficinas centrales', [svc.demolicion, svc.electricidad, svc.pintura], 'Aprobado'); mkAbo(k, -165, .5, 'Anticipo 50%'); mkFac(k, -150); mkAbo(k, -135, .5, 'Pago final');
+  k = mkCot(c2, -150, 'Reforma de 3 locales', [{ ...svc.cocina, cantidad: 3 }, { ...svc.pintura, cantidad: 300 }], 'Aprobado'); mkAbo(k, -145, .4, 'Anticipo 40%'); mkFac(k, -120); mkAbo(k, -100, .3, 'Segundo pago'); mkAbo(k, -80, .3, 'Pago final', 'Domiciliación');
+  k = mkCot(c4, -130, 'Reforma de gabinetes dentales', [svc.fontaneria, svc.electricidad], 'Aprobado'); mkFac(k, -115); mkAbo(k, -95, 1, 'Pago total', 'Transferencia', 'Banco Sabadell');
+  k = mkCot(c5, -110, 'Adecuación de nave', [svc.demolicion, svc.electricidad, { ...svc.pintura, cantidad: 400 }], 'Aprobado'); mkAbo(k, -105, .5, 'Anticipo 50%', 'Transferencia', 'BBVA'); mkFac(k, -70, 45); mkAbo(k, -40, .25, 'Pago parcial', 'Transferencia', 'BBVA');
+  k = mkCot(c6, -95, 'Pintura de despacho', [{ ...svc.pintura, cantidad: 60 }], 'Aprobado'); mkFac(k, -88, 15); mkAbo(k, -86, 1, 'Pago total', 'Tarjeta', 'Banco Santander');
+  k = mkCot(c3, -80, 'Reforma de baño', [svc.demolicion, svc.alicatado, svc.fontaneria], 'Anulado');
+  k = mkCot(c1, -60, 'Reforma de aseos', [{ ...svc.alicatado, cantidad: 40 }, svc.fontaneria], 'Aprobado'); mkAbo(k, -55, .3, 'Anticipo 30%'); mkFac(k, -40, 20);
+  k = mkCot(c2, -45, 'Montaje de cocina en local', [svc.cocina], 'Aprobado'); mkFac(k, -30); mkAbo(k, -12, 1, 'Pago total', 'Bizum');
+  k = mkCot(c4, -28, 'Ampliación de recepción', [svc.demolicion, { ...svc.pintura, cantidad: 80 }], 'Aprobado'); mkAbo(k, -20, .5, 'Anticipo 50%', 'Transferencia', 'Banco Sabadell'); mkFac(k, -5);
+  k = mkCot(c5, -20, 'Mantenimiento 2.º semestre 2026', [svc.electricidad], 'Enviado'); k.vence = iso(4);
+  k = mkCot(c6, -10, 'Reforma de cocina', [svc.cocina, svc.alicatado], 'Enviado'); k.vence = iso(6);
+  k = mkCot(c3, -5, 'Reforma integral de baño', [svc.demolicion, svc.alicatado, svc.fontaneria], 'Borrador');
+  k = mkCot(c2, -50, 'Local nuevo – reforma', [svc.electricidad, { ...svc.pintura, cantidad: 150 }], 'Enviado');
+  k = mkCot(c1, -3, 'Pintura de fachada', [{ ...svc.pintura, concepto: 'Pintura de fachada (m²)', descripcion: 'Pintura pétrea, incluye andamio', cantidad: 200, valor: 14 }], 'Enviado'); k.vence = iso(27);
 
   // Documentos libres de ejemplo
-  db.documentos.push({ id: uid('doc'), nombre: 'Contrato marco de servicios.pdf', mime: 'application/pdf', categoria: 'Contrato', clienteId: c1.id, proyecto: 'Agenda de obra y visitas', etiquetas: ['contrato', 'firmado'], versiones: [{ v: 1, fecha: new Date(now - 168 * 864e5).toISOString(), usuario: 'Administrador', size: 182000, data: '' }], creado: new Date(now - 168 * 864e5).toISOString() });
-  db.documentos.push({ id: uid('doc'), nombre: 'RUT Café Origen.pdf', mime: 'application/pdf', categoria: 'Documento legal', clienteId: c2.id, proyecto: '', etiquetas: ['rut'], versiones: [{ v: 1, fecha: new Date(now - 150 * 864e5).toISOString(), usuario: 'Laura Gómez', size: 96000, data: '' }, { v: 2, fecha: new Date(now - 20 * 864e5).toISOString(), usuario: 'Laura Gómez', size: 98000, data: '' }], creado: new Date(now - 150 * 864e5).toISOString() });
-  db.documentos.push({ id: uid('doc'), nombre: 'Foto entrega sede norte.jpg', mime: 'image/jpeg', categoria: 'Imagen', clienteId: c2.id, proyecto: 'POS para 3 sedes', etiquetas: ['evidencia', 'entrega'], versiones: [{ v: 1, fecha: new Date(now - 82 * 864e5).toISOString(), usuario: 'Carlos Ruiz', size: 420000, data: '' }], creado: new Date(now - 82 * 864e5).toISOString() });
+  db.documentos.push({ id: uid('doc'), nombre: 'Contrato de obra.pdf', mime: 'application/pdf', categoria: 'Contrato', clienteId: c1.id, proyecto: 'Reforma de oficinas centrales', etiquetas: ['contrato', 'firmado'], versiones: [{ v: 1, fecha: new Date(now - 168 * 864e5).toISOString(), usuario: 'Administrador', size: 182000, data: '' }], creado: new Date(now - 168 * 864e5).toISOString() });
+  db.documentos.push({ id: uid('doc'), nombre: 'Escrituras Café Origen.pdf', mime: 'application/pdf', categoria: 'Documento legal', clienteId: c2.id, proyecto: '', etiquetas: ['escrituras'], versiones: [{ v: 1, fecha: new Date(now - 150 * 864e5).toISOString(), usuario: 'Laura Gómez', size: 96000, data: '' }, { v: 2, fecha: new Date(now - 20 * 864e5).toISOString(), usuario: 'Laura Gómez', size: 98000, data: '' }], creado: new Date(now - 150 * 864e5).toISOString() });
+  db.documentos.push({ id: uid('doc'), nombre: 'Foto final de obra local norte.jpg', mime: 'image/jpeg', categoria: 'Imagen', clienteId: c2.id, proyecto: 'Reforma de 3 locales', etiquetas: ['evidencia', 'entrega'], versiones: [{ v: 1, fecha: new Date(now - 82 * 864e5).toISOString(), usuario: 'Carlos Ruiz', size: 420000, data: '' }], creado: new Date(now - 82 * 864e5).toISOString() });
 
   // Auditoría inicial derivada
   const pushAu = (fecha, usuario, accion, entidad, ref, detalle) => db.auditoria.push({ id: uid('au'), fecha, usuario, rol: '', accion, entidad, ref, detalle, cambios: [] });
   db.clientes.forEach((c) => pushAu(c.creado, c.creadoPor, 'Crear', 'Cliente', c.codigo, c.razonSocial));
-  db.cotizaciones.forEach((c) => pushAu(c.creado, c.creadoPor, 'Crear', 'Cotización', c.numero, c.proyecto));
+  db.cotizaciones.forEach((c) => pushAu(c.creado, c.creadoPor, 'Crear', 'Presupuesto', c.numero, c.proyecto));
   db.facturas.forEach((f) => pushAu(f.creado, f.creadoPor, 'Convertir', 'Factura', f.numero, 'Generada desde ' + getCot(f.cotizacionId).numero));
-  db.abonos.forEach((a) => pushAu(a.creado, a.creadoPor, 'Registrar', 'Abono', a.numero, `${a.concepto} · ${fmtMoney(a.valor)}`));
+  db.abonos.forEach((a) => pushAu(a.creado, a.creadoPor, 'Registrar', 'Cobro', a.numero, `${a.concepto} · ${fmtMoney(a.valor)}`));
   db.auditoria.sort((a, b) => b.fecha.localeCompare(a.fecha));
   return db;
 }

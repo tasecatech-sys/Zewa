@@ -27,35 +27,35 @@ function loadWordLibs() {
 /* Variables disponibles en las plantillas Word */
 const WORD_VARS = [
   ['Documento', [
-    ['numero', 'Número del documento (COT-2026-0001, FE-…, AB-…)'], ['titulo', 'Cotización / Factura de venta / Recibo de abono'],
+    ['numero', 'Número del documento (PRE-2026-0001, FAC-…, REC-…)'], ['titulo', 'Presupuesto / Factura / Recibo de pago'],
     ['fecha', 'Fecha (dd/mm/aaaa)'], ['vence', 'Fecha de vencimiento / válido hasta'], ['fecha_operacion', 'Fecha de operación (facturas)'],
-    ['proyecto', 'Proyecto'], ['descripcion', 'Descripción general (cotizaciones)'], ['estado', 'Estado del documento'],
-    ['validez', 'Validez'], ['forma_pago', 'Forma de pago'], ['tiempo_ejecucion', 'Tiempo de ejecución'], ['responsable', 'Responsable comercial'],
-    ['observaciones', 'Observaciones'], ['cotizacion_numero', 'Cotización relacionada'], ['factura_numero', 'Factura relacionada'],
+    ['proyecto', 'Proyecto'], ['descripcion', 'Descripción general (presupuestos)'], ['estado', 'Estado del documento'],
+    ['validez', 'Validez'], ['forma_pago', 'Forma de pago'], ['tiempo_ejecucion', 'Plazo de ejecución'], ['responsable', 'Responsable comercial'],
+    ['observaciones', 'Observaciones'], ['cotizacion_numero', 'Presupuesto relacionado'], ['factura_numero', 'Factura relacionada'],
   ]],
   ['Cliente', [
-    ['cliente_nombre', 'Razón social / nombre'], ['cliente_comercial', 'Nombre comercial'], ['cliente_nif', 'NIT / NIF / CIF'],
-    ['cliente_direccion', 'Dirección'], ['cliente_cp', 'Código postal'], ['cliente_ciudad', 'Ciudad / localidad'], ['cliente_provincia', 'Departamento / provincia'],
-    ['cliente_pais', 'País'], ['cliente_telefono', 'Teléfono o celular'], ['cliente_email', 'Correo'], ['cliente_contacto', 'Contacto principal'], ['cliente_cargo', 'Cargo del contacto'],
+    ['cliente_nombre', 'Razón social / nombre'], ['cliente_comercial', 'Nombre comercial'], ['cliente_nif', 'NIF / CIF'],
+    ['cliente_direccion', 'Dirección'], ['cliente_cp', 'Código postal'], ['cliente_ciudad', 'Localidad'], ['cliente_provincia', 'Provincia'],
+    ['cliente_pais', 'País'], ['cliente_telefono', 'Teléfono o móvil'], ['cliente_email', 'Correo'], ['cliente_contacto', 'Contacto principal'], ['cliente_cargo', 'Cargo del contacto'],
   ]],
   ['Empresa emisora (Configuración)', [
-    ['empresa_nombre', 'Razón social'], ['empresa_nif', 'NIT / NIF'], ['empresa_direccion', 'Dirección'], ['empresa_cp', 'Código postal'],
-    ['empresa_ciudad', 'Ciudad'], ['empresa_provincia', 'Departamento / provincia'], ['empresa_pais', 'País'], ['empresa_telefono', 'Teléfono'], ['empresa_email', 'Correo'],
-    ['banco', 'Banco'], ['titular', 'Titular de la cuenta'], ['cuenta', 'Número de cuenta'], ['metodo_pago', 'Método de pago (facturas)'],
+    ['empresa_nombre', 'Razón social'], ['empresa_nif', 'NIF / CIF'], ['empresa_direccion', 'Dirección'], ['empresa_cp', 'Código postal'],
+    ['empresa_ciudad', 'Localidad'], ['empresa_provincia', 'Provincia'], ['empresa_pais', 'País'], ['empresa_telefono', 'Teléfono'], ['empresa_email', 'Correo'],
+    ['banco', 'Banco'], ['titular', 'Titular de la cuenta'], ['cuenta', 'Número de cuenta (IBAN)'], ['metodo_pago', 'Método de pago (facturas)'],
   ]],
   ['Líneas de detalle — dentro de {{#items}} … {{/items}}', [
     ['#items', 'Inicio de la fila que se repite (ponlo en la primera celda)'], ['/items', 'Fin de la fila que se repite (ponlo en la última celda)'],
     ['n', 'Número de línea'], ['concepto', 'Concepto'], ['descripcion', 'Descripción de la línea'], ['cantidad', 'Cantidad'],
-    ['valor_unitario', 'Valor unitario'], ['descuento_pct', 'Descuento %'], ['base', 'Base imponible de la línea'], ['iva_pct', 'IVA %'], ['iva_valor', 'Valor del IVA'], ['total', 'Total de la línea'],
+    ['valor_unitario', 'Precio unitario'], ['descuento_pct', 'Descuento %'], ['base', 'Base imponible de la línea'], ['iva_pct', 'IVA %'], ['iva_valor', 'Importe del IVA'], ['total', 'Total de la línea'],
   ]],
   ['Totales', [
     ['subtotal', 'Subtotal antes de descuento'], ['descuento_total', 'Descuento total'], ['base_imponible', 'Base imponible'], ['iva_total', 'IVA total'],
-    ['total', 'Total del documento (fuera de la tabla)'], ['abonado', 'Total abonado / abonos aplicados'], ['saldo', 'Saldo pendiente'],
-    ['moneda', 'Código de moneda (EUR, COP…)'], ['simbolo', 'Símbolo (€, $…)'],
+    ['total', 'Total del documento (fuera de la tabla)'], ['abonado', 'Total cobrado / pagos a cuenta'], ['saldo', 'Saldo pendiente'],
+    ['moneda', 'Código de moneda (EUR, USD…)'], ['simbolo', 'Símbolo (€, $…)'],
   ]],
-  ['Abonos', [
-    ['valor_abono', 'Valor del abono (recibos)'], ['referencia', 'Referencia de operación'], ['total_proyecto', 'Total del proyecto'],
-    ['#abonos', 'Inicio de fila repetida de abonos aplicados'], ['/abonos', 'Fin de fila de abonos'], ['abono_numero / abono_fecha / abono_concepto / abono_valor', 'Campos dentro de {{#abonos}}'],
+  ['Cobros', [
+    ['valor_abono', 'Importe del cobro (recibos)'], ['referencia', 'Referencia de operación'], ['total_proyecto', 'Total del proyecto'],
+    ['#abonos', 'Inicio de la fila repetida de pagos a cuenta'], ['/abonos', 'Fin de la fila de pagos a cuenta'], ['abono_numero / abono_fecha / abono_concepto / abono_valor', 'Campos dentro de {{#abonos}}'],
   ]],
 ];
 const WORD_KNOWN = new Set(WORD_VARS.flatMap(([, l]) => l.flatMap(([k]) => k.replace(/^[#/]/, '').split(' / '))));
@@ -75,7 +75,7 @@ function wordData(tipo, d) {
   if (tipo === 'factura' && d.id) { const r = facturaResumen(d); fin = { abonado: r.abonado, saldo: r.saldo, total: r.total, abonos: r.abonos }; }
   else if (cot?.id) { const r = proyectoResumen(cot); fin = { abonado: r.abonado, saldo: r.saldo, total: r.total, abonos: r.abonos }; }
   return {
-    titulo: { cotizacion: 'Cotización', factura: 'Factura de venta', abono: 'Recibo de abono' }[tipo],
+    titulo: { cotizacion: 'Presupuesto', factura: 'Factura', abono: 'Recibo de pago' }[tipo],
     numero: d.numero || '', fecha: fmtDMY(d.fecha), vence: fmtDMY(d.vence), fecha_operacion: fmtDMY(d.fechaOperacion),
     proyecto: d.proyecto || cot?.proyecto || '', descripcion: d.descripcion || '', estado: tipo === 'factura' && d.id ? facturaEstado(d) : tipo === 'cotizacion' ? cotEstado(d) : d.estado || '',
     validez: d.validez || '', forma_pago: d.formaPago || '', tiempo_ejecucion: d.tiempoEjecucion || '', responsable: d.responsable || '', observaciones: d.observaciones || '',
