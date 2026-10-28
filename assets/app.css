@@ -75,6 +75,17 @@ button, input, select, textarea { font: inherit; color: inherit; }
 h1, h2, h3, h4 { margin: 0; line-height: 1.25; }
 svg.i { width: 18px; height: 18px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 
+/* ---------- Pantalla de inicio de sesión ---------- */
+.login-screen { min-height: 100vh; display: grid; place-items: center; padding: 24px; background: radial-gradient(circle at 20% 15%, var(--brand-50), var(--bg) 55%); }
+.login-card { width: min(380px, 100%); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-lg); padding: 32px 28px; animation: pop .2s ease-out; }
+.login-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 22px; }
+.login-brand .brand-mark { width: 40px; height: 40px; border-radius: 10px; background: linear-gradient(135deg, #3b82f6, #1d4ed8); display: grid; place-items: center; font-weight: 800; color: #fff; font-size: 17px; }
+.login-brand b { display: block; font-size: 16px; }
+.login-brand small { color: var(--text-3); font-size: 12px; }
+.login-card h1 { font-size: 19px; font-weight: 700; margin-bottom: 18px; }
+.login-card .f { margin-bottom: 14px; }
+.login-card button[type="submit"] { margin-top: 6px; }
+
 /* ---------- Layout ---------- */
 .app { display: grid; grid-template-columns: 248px 1fr; min-height: 100vh; }
 .sidebar { background: var(--sidebar); color: var(--sidebar-text); padding: 18px 12px; position: sticky; top: 0; height: 100vh; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; z-index: 40; }
@@ -251,6 +262,16 @@ textarea.in { resize: vertical; min-height: 70px; }
 .mini-tbl { font-size: 12.5px; width: 100%; border-collapse: collapse; }
 .mini-tbl td, .mini-tbl th { padding: 5px 8px; border-bottom: 1px solid var(--border); text-align: left; }
 .mini-tbl .num { text-align: right; }
+
+/* ---------- Matriz de permisos (Usuarios y roles) ---------- */
+.tbl input[type="radio"] { width: 16px; height: 16px; accent-color: var(--brand); cursor: pointer; }
+.tbl input[type="radio"][disabled] { cursor: not-allowed; opacity: .6; }
+
+/* ---------- Selector de inventario ---------- */
+.inv-pick-row { display: flex; align-items: center; gap: 14px; padding: 10px 6px; border-bottom: 1px solid var(--border); }
+.inv-pick-row:last-child { border-bottom: 0; }
+.inv-pick-row > div:first-child { flex: 1; min-width: 0; }
+.inv-pick-row .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 /* ---------- Modal / drawer / toast ---------- */
 .overlay { position: fixed; inset: 0; background: rgba(8, 14, 30, .5); backdrop-filter: blur(2px); display: grid; place-items: center; z-index: 100; padding: 16px; animation: fade .15s; }

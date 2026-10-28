@@ -121,16 +121,25 @@ const NAV = [
   { h: 'dashboard', label: 'Panel de control', icon: 'home', group: 'General' },
   { h: 'busqueda', label: 'Búsqueda inteligente', icon: 'search' },
   { h: 'clientes', label: 'Clientes', icon: 'users', group: 'Comercial', count: () => DB.clientes.length },
+  { h: 'inventario', label: 'Inventario', icon: 'tag', count: () => DB.inventario.filter((i) => i.estado !== 'Inactivo').length },
   { h: 'cotizaciones', label: 'Presupuestos', icon: 'quote', count: () => DB.cotizaciones.filter((c) => ['Borrador', 'Enviado', 'Aprobado'].includes(cotEstado(c))).length },
   { h: 'abonos', label: 'Cobros', icon: 'cash' },
   { h: 'facturas', label: 'Facturación', icon: 'invoice', count: () => DB.facturas.filter((f) => ['Pendiente', 'Vencida', 'En Proceso'].includes(facturaEstado(f))).length },
   { h: 'plantillas', label: 'Plantillas', icon: 'layout', group: 'Administración' },
   { h: 'documentos', label: 'Gestión documental', icon: 'folder' },
   { h: 'auditoria', label: 'Auditoría', icon: 'shield' },
+  { h: 'usuarios', label: 'Usuarios y permisos', icon: 'users', count: () => DB.usuarios.filter((u) => u.activo !== false).length },
   { h: 'config', label: 'Configuración', icon: 'settings' },
 ];
 function renderNav(active) {
-  $('#nav').innerHTML = NAV.map((n) => `${n.group ? `<div class="nav-label">${n.group}</div>` : ''}<a href="#/${n.h}" class="${active === n.h ? 'active' : ''}">${ico(n.icon)}<span>${n.label}</span>${n.count ? `<span class="count">${n.count()}</span>` : ''}</a>`).join('');
+  let g = '';
+  const grupos = NAV.map((n) => { g = n.group || g; return { ...n, g }; });
+  let last = null;
+  $('#nav').innerHTML = grupos.filter((n) => puedeVer(n.h)).map((n) => {
+    const head = n.g !== last ? `<div class="nav-label">${n.g}</div>` : '';
+    last = n.g;
+    return `${head}<a href="#/${n.h}" class="${active === n.h ? 'active' : ''}">${ico(n.icon)}<span>${n.label}</span>${n.count ? `<span class="count">${n.count()}</span>` : ''}</a>`;
+  }).join('');
 }
 
 /* ---------------- Router ---------------- */
@@ -138,10 +147,15 @@ function parseHash() {
   const [path, qs] = (location.hash.replace(/^#\/?/, '') || 'dashboard').split('?');
   return { parts: path.split('/').filter(Boolean), query: Object.fromEntries(new URLSearchParams(qs || '')) };
 }
+function primerModuloAccesible() { const n = NAV.find((x) => puedeVer(x.h)); return n ? '#/' + n.h : null; }
+function accessDenied(modLabel) {
+  const href = primerModuloAccesible();
+  return pageHead('Acceso restringido', `Tu rol (${esc(rolDe(Store.user())?.nombre || '—')}) no tiene permiso para ver ${modLabel ? `"${esc(modLabel)}"` : 'este módulo'}.`,
+    href ? `<a class="btn primary" href="${href}">${ico('arrow')}Ir a un módulo disponible</a>` : '');
+}
 function route() {
   const { parts, query } = parseHash();
   const [mod, a, b] = parts;
-  renderNav(mod);
   view.onclick = null;
   $('#sidebar').classList.remove('open');
   view.style.animation = 'none'; void view.offsetWidth; view.style.animation = '';
@@ -149,6 +163,7 @@ function route() {
   const R = {
     dashboard: () => Dashboard(),
     clientes: () => (a === 'nuevo' ? ClienteForm() : a && b === 'editar' ? ClienteForm(a) : a ? ClienteDetalle(a, query.tab) : Clientes()),
+    inventario: () => (a === 'nuevo' ? InventarioForm() : a && b === 'editar' ? InventarioForm(a) : Inventario()),
     cotizaciones: () => (a === 'nueva' ? DocEditor('cotizacion', null, query) : a && b === 'editar' ? DocEditor('cotizacion', a) : a ? CotDetalle(a, query.tab) : Cotizaciones(query)),
     facturas: () => (a === 'nueva' ? DocEditor('factura', null, query) : a && b === 'editar' ? DocEditor('factura', a) : a ? FacDetalle(a, query.tab) : Facturas(query)),
     abonos: () => (a === 'nuevo' ? AbonoForm(query) : a ? AbonoDetalle(a) : Abonos()),
@@ -156,9 +171,13 @@ function route() {
     busqueda: () => Busqueda(query),
     documentos: () => Documentos(query),
     auditoria: () => Auditoria(),
+    usuarios: () => (a === 'nuevo' ? UsuarioForm() : a === 'rol' && b === 'nuevo' ? RolForm() : a === 'rol' && b ? RolForm(b) : a && b === 'editar' ? UsuarioForm(a) : Usuarios(query)),
     config: () => Config(),
   };
-  (R[mod] || R.dashboard)();
+  const modKey = R[mod] ? mod : 'dashboard';
+  renderNav(modKey);
+  if (!puedeVer(modKey)) { view.innerHTML = accessDenied(NAV.find((n) => n.h === modKey)?.label); hydrateWord(view); return; }
+  R[modKey]();
   hydrateWord(view);
 }
 window.addEventListener('hashchange', route);
@@ -252,7 +271,7 @@ function clienteStats(c) {
   return { cots, facs, abos, comprado: facs.reduce((s, f) => s + docTotals(f.items).total, 0), pagado: sumAbonos(abos), saldo: facs.reduce((s, f) => s + facturaResumen(f).saldo, 0) };
 }
 function Clientes() {
-  view.innerHTML = pageHead('Clientes', 'Empresas y personas con las que tienes relación comercial', `<a class="btn primary" href="#/clientes/nuevo">${ico('plus')}Nuevo cliente</a>`) + `<div class="card" id="tbl"></div>`;
+  view.innerHTML = pageHead('Clientes', 'Empresas y personas con las que tienes relación comercial', puedeGestionar('clientes') ? `<a class="btn primary" href="#/clientes/nuevo">${ico('plus')}Nuevo cliente</a>` : '') + `<div class="card" id="tbl"></div>`;
   DataTable($('#tbl'), {
     rows: () => DB.clientes.map((c) => ({ ...c, _s: clienteStats(c) })),
     placeholder: 'Buscar por nombre, NIF, localidad, correo…',
@@ -315,6 +334,7 @@ function validateRequired(form, fields) {
   return ok;
 }
 function ClienteForm(id) {
+  if (denyGestionar('clientes', id ? '/clientes/' + id : '/clientes')) return;
   const c = id ? getCliente(id) : { codigo: '(se asigna al guardar)', tipo: 'Jurídica', pais: 'España' };
   if (!c) return notFound();
   view.innerHTML = pageHead(id ? 'Editar cliente' : 'Nuevo cliente', id ? esc(c.razonSocial) : 'Los campos con * son obligatorios', '', `<a href="#/clientes">Clientes</a> / ${id ? esc(c.codigo) : 'Nuevo'}`) +
@@ -359,8 +379,9 @@ function ClienteDetalle(id, tab = 'resumen') {
   } else if (tab === 'pagos') {
     DataTable(body, { rows: () => DB.abonos.filter((a) => a.clienteId === id), searchText: (a) => a.numero + a.concepto + a.referencia, sort: 'fecha', columns: aboColumns(false), onRow: (a) => go('/abonos/' + a.id), footer: (r) => 'Total ' + fmtMoney(sumAbonos(r.filter((a) => a.estado !== 'Anulado'))) });
   } else if (tab === 'adjuntos') {
-    body.innerHTML = `<div class="card-pad"><div class="drop" id="drop">${ico('upload')}<div><b>Arrastra archivos aquí</b> o haz clic para adjuntar al cliente</div><small>PDF, imágenes, contratos · máx. 2 MB c/u</small></div><div id="docList" class="mt"></div></div>`;
-    setupDrop($('#drop'), (files) => uploadDialog(files, { clienteId: id }, () => route()));
+    const puedeSubir = puedeGestionar('documentos');
+    body.innerHTML = `<div class="card-pad">${puedeSubir ? `<div class="drop" id="drop">${ico('upload')}<div><b>Arrastra archivos aquí</b> o haz clic para adjuntar al cliente</div><small>PDF, imágenes, contratos · máx. 2 MB c/u</small></div>` : ''}<div id="docList" class="mt"></div></div>`;
+    if (puedeSubir) setupDrop($('#drop'), (files) => uploadDialog(files, { clienteId: id }, () => route()));
     $('#docList').innerHTML = docs.length ? docs.map(docRowHTML).join('') : emptyState('Sin documentos adjuntos');
     bindDocRows($('#docList'));
   } else {
@@ -368,6 +389,93 @@ function ClienteDetalle(id, tab = 'resumen') {
     const items = DB.auditoria.filter((a) => refs.includes(a.ref));
     body.innerHTML = `<div class="card-pad"><ul class="timeline">${items.map(auditItem).join('') || emptyState('Sin registros')}</ul></div>`;
   }
+}
+
+/* ==========================================================
+   MÓDULO 2B · INVENTARIO (servicios y materiales)
+   ========================================================== */
+const INVENTARIO_FIELDS = [
+  ['sec', 'Identificación'],
+  ['codigo', 'Código', 's3', { readonly: true }],
+  ['tipo', 'Tipo', 's3', { req: 1, options: ['Servicio', 'Material'] }],
+  ['categoria', 'Categoría', 's3'],
+  ['unidad', 'Unidad', 's3', { req: 1 }],
+  ['nombre', 'Nombre', 's12', { req: 1 }],
+  ['descripcion', 'Descripción', 's12', { textarea: 1 }],
+  ['sec', 'Precios (sin impuestos)'],
+  ['costo', 'Costo', 's4', { req: 1, type: 'number' }],
+  ['precioVenta', 'Precio de venta al público', 's4', { req: 1, type: 'number' }],
+  ['iva', 'IVA % por defecto', 's4', { type: 'number' }],
+  ['sec', 'Estado'],
+  ['estado', 'Estado', 's3', { options: ['Activo', 'Inactivo'] }],
+];
+function Inventario() {
+  view.innerHTML = pageHead('Inventario', 'Catálogo de servicios y materiales para presupuestar y facturar', puedeGestionar('inventario') ? `<a class="btn primary" href="#/inventario/nuevo">${ico('plus')}Nuevo ítem</a>` : '') + `<div class="card" id="tbl"></div>`;
+  DataTable($('#tbl'), {
+    rows: () => DB.inventario,
+    placeholder: 'Buscar por código, nombre, categoría…',
+    searchText: (i) => [i.codigo, i.nombre, i.categoria, i.descripcion, i.unidad].join(' '),
+    chips: [{ k: 'all', label: 'Todos' }, { k: 'Servicio', label: 'Servicios', test: (i) => i.tipo === 'Servicio' }, { k: 'Material', label: 'Materiales', test: (i) => i.tipo === 'Material' }, { k: 'inactivo', label: 'Inactivos', test: (i) => i.estado === 'Inactivo' }],
+    sort: 'nombre', dir: 1, csv: 'inventario',
+    columns: [
+      { k: 'codigo', label: 'Código', render: (i) => `<span class="muted">${i.codigo}</span>` },
+      { k: 'nombre', label: 'Nombre', render: (i) => `<div class="strong">${esc(i.nombre)}</div><div class="muted">${esc(i.categoria || '')}</div>` },
+      { k: 'tipo', label: 'Tipo', render: (i) => `<span class="tag">${i.tipo}</span>` },
+      { k: 'unidad', label: 'Unidad' },
+      { k: 'costo', label: 'Costo', cls: 'num', sort: (i) => +i.costo, render: (i) => fmtMoney(i.costo) },
+      { k: 'precioVenta', label: 'Precio venta', cls: 'num', sort: (i) => +i.precioVenta, render: (i) => fmtMoney(i.precioVenta) },
+      { k: 'margen', label: 'Margen', cls: 'num', sort: (i) => invMargen(i), render: (i) => `${invMargen(i).toFixed(0)}%` },
+      { k: 'estado', label: 'Estado', render: (i) => badge(i.estado === 'Inactivo' ? 'Inactiva' : 'Activa') },
+    ],
+    onRow: (i) => go('/inventario/' + i.id + '/editar'),
+    empty: 'Añade servicios y materiales para poder seleccionarlos al crear presupuestos.',
+  });
+}
+function InventarioForm(id) {
+  if (denyGestionar('inventario', '/inventario')) return;
+  const i = id ? getInvItem(id) : { codigo: '(se asigna al guardar)', tipo: 'Servicio', unidad: 'ud', iva: DB.empresa.ivaDefault ?? 21, estado: 'Activo' };
+  if (id && !i) return notFound();
+  view.innerHTML = pageHead(id ? 'Editar ítem de inventario' : 'Nuevo ítem de inventario', 'El precio de venta se guarda sin impuestos: el IVA se aplica al presupuestar o facturar', '', `<a href="#/inventario">Inventario</a> / ${id ? esc(i.codigo) : 'Nuevo'}`) +
+    `<form class="card card-pad" id="frm" novalidate><div class="form-grid">${INVENTARIO_FIELDS.map((f) => fieldHTML(f, i[f[0]])).join('')}</div>
+     <div class="btn-row" style="justify-content:flex-end;margin-top:18px"><a class="btn" href="#/inventario">Cancelar</a><button class="btn primary">${ico('check')}Guardar ítem</button></div></form>`;
+  const form = $('#frm');
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    if (!validateRequired(form, INVENTARIO_FIELDS)) return toast('Revisa los campos obligatorios marcados en rojo.', 'bad');
+    const v = formValues(form); delete v.codigo;
+    v.costo = +v.costo || 0; v.precioVenta = +v.precioVenta || 0; v.iva = v.iva === '' ? (DB.empresa.ivaDefault ?? 21) : +v.iva;
+    if (id) {
+      const before = clone(i); Object.assign(i, v, { actualizado: new Date().toISOString() });
+      audit('Editar', 'Ítem de inventario', i.codigo, i.nombre, diffObjects(before, i));
+    } else {
+      const n = { id: uid('inv'), codigo: Store.nextNumber('INV'), ...v, creado: new Date().toISOString(), creadoPor: Store.user().nombre };
+      DB.inventario.push(n); audit('Crear', 'Ítem de inventario', n.codigo, n.nombre); id = n.id;
+    }
+    persist(); toast('Ítem guardado'); go('/inventario');
+  });
+}
+/* Selector de inventario, reutilizado en el editor de presupuestos/facturas */
+function inventoryPicker(onPick) {
+  const m = modal({
+    title: 'Añadir desde inventario', size: 'lg', hideOk: true, cancelText: 'Cerrar',
+    body: `<div class="search" style="margin-bottom:12px">${ico('search')}<input id="invq" type="search" placeholder="Buscar servicio o material…" autocomplete="off"></div><div id="invList"></div>`,
+  });
+  const renderList = (q = '') => {
+    const qq = norm(q);
+    const rows = DB.inventario.filter((i) => i.estado !== 'Inactivo' && (!qq || norm([i.codigo, i.nombre, i.categoria, i.descripcion].join(' ')).includes(qq)));
+    $('#invList', m.el).innerHTML = rows.length ? rows.map((i) => `<div class="inv-pick-row" data-id="${i.id}">
+        <div><b>${esc(i.nombre)}</b> <span class="tag">${i.tipo}</span><div class="muted">${esc(i.descripcion || '')}</div></div>
+        <div class="num">${fmtMoney(i.precioVenta)}<div class="muted">/ ${esc(i.unidad)} · IVA ${i.iva ?? (DB.empresa.ivaDefault ?? 21)}%</div></div>
+        <button type="button" class="btn sm primary" data-pick="${i.id}">${ico('plus')}Añadir</button>
+      </div>`).join('') : emptyState(DB.inventario.length ? 'Sin resultados en el inventario' : 'El inventario está vacío. Añade ítems desde el módulo Inventario.', 'search');
+  };
+  renderList();
+  $('#invq', m.el).addEventListener('input', (e) => renderList(e.target.value));
+  m.el.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-pick]'); if (!b) return;
+    const it = getInvItem(b.dataset.pick); if (!it) return;
+    onPick(it); toast(`${it.nombre} añadido`);
+  });
 }
 
 /* ==========================================================
@@ -386,7 +494,7 @@ function cotColumns(withClient = true) {
 }
 function Cotizaciones(query = {}) {
   const today = todayISO();
-  view.innerHTML = pageHead('Presupuestos', 'Propuestas comerciales y su conversión a factura', `<a class="btn primary" href="#/cotizaciones/nueva">${ico('plus')}Nuevo presupuesto</a>`) + `<div class="card" id="tbl"></div>`;
+  view.innerHTML = pageHead('Presupuestos', 'Propuestas comerciales y su conversión a factura', puedeGestionar('cotizaciones') ? `<a class="btn primary" href="#/cotizaciones/nueva">${ico('plus')}Nuevo presupuesto</a>` : '') + `<div class="card" id="tbl"></div>`;
   DataTable($('#tbl'), {
     rows: () => DB.cotizaciones,
     placeholder: 'Número, cliente, NIF, proyecto…',
@@ -403,6 +511,7 @@ function Cotizaciones(query = {}) {
 const emptyItem = () => ({ concepto: '', descripcion: '', cantidad: 1, valor: 0, iva: DB.empresa.ivaDefault ?? 21, desc: 0 });
 function DocEditor(tipo, id, query = {}) {
   const isCot = tipo === 'cotizacion';
+  if (denyGestionar(isCot ? 'cotizaciones' : 'facturas', id ? `/${isCot ? 'cotizaciones' : 'facturas'}/${id}` : `/${isCot ? 'cotizaciones' : 'facturas'}`)) return;
   const list = isCot ? DB.cotizaciones : DB.facturas;
   const existing = id ? list.find((x) => x.id === id) : null;
   if (id && !existing) return notFound();
@@ -430,7 +539,8 @@ function DocEditor(tipo, id, query = {}) {
         <div class="f s6"><label>Cliente <span class="req">*</span></label><select class="in" name="clienteId">${cliOpts}</select><span class="hint"><a href="#/clientes/nuevo">+ Crear cliente nuevo</a></span></div>
         <div class="f s6" id="cliInfo"></div>
       </div></div>
-      <div class="card"><div class="card-head"><div><h3>Detalle</h3><p>Concepto, cantidad, precio unitario, descuento e IVA por línea</p></div><button type="button" class="btn sm" id="addItem">${ico('plus')}Añadir línea</button></div>
+      <div class="card"><div class="card-head"><div><h3>Detalle</h3><p>Concepto, cantidad, precio unitario, descuento e IVA por línea</p></div><div class="btn-row"><button type="button" class="btn ghost sm" id="addItem">${ico('plus')}Línea en blanco</button><button type="button" class="btn primary" id="addFromInv">${ico('tag')}Añadir desde inventario</button></div></div>
+        ${!existing && DB.inventario.length ? `<div style="margin:14px 20px 0;padding:10px 14px;border-radius:10px;background:var(--brand-50);color:var(--brand);display:flex;align-items:center;gap:8px;font-size:13px"><b style="display:flex">${ico('tag')}</b>Usa <b>&nbsp;Añadir desde inventario&nbsp;</b> para cargar servicios y materiales con el precio ya definido.</div>` : ''}
         <div class="tbl-wrap"><table class="tbl items"><thead><tr><th style="min-width:220px">Concepto / descripción</th><th class="num" style="width:80px">Cant.</th><th class="num" style="width:140px">Precio unit.</th><th class="num" style="width:80px">Desc %</th><th class="num" style="width:80px">IVA %</th><th class="num" style="width:130px">Subtotal</th><th class="num" style="width:130px">Total línea</th><th style="width:40px"></th></tr></thead><tbody id="items"></tbody></table></div>
         <div class="totals" id="totals"></div></div>
       <div class="card card-pad"><div class="form-grid">
@@ -438,7 +548,7 @@ function DocEditor(tipo, id, query = {}) {
           <div class="f s3"><label>Validez</label><input class="in" name="validez" value="${esc(d.validez)}"></div>
           <div class="f s6"><label>Forma de pago</label><input class="in" name="formaPago" value="${esc(d.formaPago)}"></div>
           <div class="f s3"><label>Plazo de ejecución</label><input class="in" name="tiempoEjecucion" value="${esc(d.tiempoEjecucion)}"></div>
-          <div class="f s6"><label>Responsable comercial</label><select class="in" name="responsable">${USERS.map((u) => `<option ${u.nombre === d.responsable ? 'selected' : ''}>${u.nombre}</option>`).join('')}</select></div>
+          <div class="f s6"><label>Responsable comercial</label><select class="in" name="responsable">${DB.usuarios.filter((u) => u.activo !== false).map((u) => `<option ${u.nombre === d.responsable ? 'selected' : ''}>${esc(u.nombre)}</option>`).join('')}</select></div>
           <div class="f s6"><label>Estado</label><select class="in" name="estado">${['Borrador', 'Enviado', 'Aprobado'].map((e) => `<option ${e === d.estado ? 'selected' : ''}>${e}</option>`).join('')}</select></div>`
       : `<div class="section-title">Método de pago y datos bancarios</div>
           <div class="f s3"><label>Método de pago</label><select class="in" name="metodoPago">${FORMAS_PAGO.map((e) => `<option ${e === d.metodoPago ? 'selected' : ''}>${e}</option>`).join('')}</select></div>
@@ -483,6 +593,10 @@ function DocEditor(tipo, id, query = {}) {
   });
   $('#items').addEventListener('click', (e) => { const b = e.target.closest('[data-del]'); if (!b) return; items.splice(+b.closest('tr').dataset.i, 1); if (!items.length) items.push(emptyItem()); renderItems(); });
   $('#addItem').addEventListener('click', () => { items.push(emptyItem()); renderItems(); $$('#items tr:last-child input')[0].focus(); });
+  $('#addFromInv').addEventListener('click', () => inventoryPicker((it) => {
+    items.push({ concepto: it.nombre, descripcion: it.descripcion || '', cantidad: 1, valor: +it.precioVenta || 0, iva: it.iva ?? (DB.empresa.ivaDefault ?? 21), desc: 0 });
+    renderItems();
+  }));
   form.clienteId.addEventListener('change', showCli);
   form.cotizacionId?.addEventListener('change', () => {
     const c = getCot(form.cotizacionId.value);
@@ -531,23 +645,26 @@ function relinkFacturaCot(f, prevCotId) {
 const isWordDoc = (d) => { const c = plantillaConfig(d.plantilla); return c.formato === 'word' && !!c.docx; };
 function docActions(tipo, d) {
   const isCot = tipo === 'cotizacion';
+  const manage = puedeGestionar(isCot ? 'cotizaciones' : 'facturas');
   const locked = isCot ? ['Facturado', 'Anulado'].includes(d.estado) : d.estado === 'Anulada';
-  const canEdit = !locked && (isCot || facturaEstado(d) !== 'Pagada');
+  const canEdit = manage && !locked && (isCot || facturaEstado(d) !== 'Pagada');
   return `${canEdit ? `<a class="btn" href="#/${isCot ? 'cotizaciones' : 'facturas'}/${d.id}/editar">${ico('edit')}Editar</a>` : ''}
-    <button class="btn" data-act="dup">${ico('copy')}Duplicar</button>
+    ${manage ? `<button class="btn" data-act="dup">${ico('copy')}Duplicar</button>` : ''}
     <button class="btn" data-act="mail">${ico('mail')}Enviar</button>
     <button class="btn" data-act="pdf">${ico('download')}PDF</button>
     ${isWordDoc(d) ? `<button class="btn" data-act="word">${ico('download')}Word</button>` : ''}
-    <button class="btn" data-act="sign">${ico('pen')}Firmar</button>
-    ${!locked ? `<button class="btn danger" data-act="anular">${ico('x')}Anular</button>` : ''}
-    ${isCot && !locked ? `<a class="btn" href="#/abonos/nuevo?cot=${d.id}">${ico('cash')}Cobro</a><button class="btn primary" data-act="convert">${ico('arrow')}Convertir a factura</button>` : ''}
-    ${!isCot && !locked && facturaResumen(d).saldo > 0 ? `<a class="btn primary" href="#/abonos/nuevo?fac=${d.id}">${ico('cash')}Registrar pago</a>` : ''}`;
+    ${manage ? `<button class="btn" data-act="sign">${ico('pen')}Firmar</button>` : ''}
+    ${manage && !locked ? `<button class="btn danger" data-act="anular">${ico('x')}Anular</button>` : ''}
+    ${manage && isCot && !locked ? `<a class="btn" href="#/abonos/nuevo?cot=${d.id}">${ico('cash')}Cobro</a><button class="btn primary" data-act="convert">${ico('arrow')}Convertir a factura</button>` : ''}
+    ${manage && !isCot && !locked && facturaResumen(d).saldo > 0 ? `<a class="btn primary" href="#/abonos/nuevo?fac=${d.id}">${ico('cash')}Registrar pago</a>` : ''}`;
 }
 function bindDocActions(tipo, d) {
   const isCot = tipo === 'cotizacion', ent = { cotizacion: 'Presupuesto', factura: 'Factura', abono: 'Cobro' }[tipo];
+  const modulo = { cotizacion: 'cotizaciones', factura: 'facturas', abono: 'abonos' }[tipo];
   view.onclick = async (e) => {
     const b = e.target.closest('[data-act]'); if (!b) return;
     const act = b.dataset.act;
+    if (['sign', 'dup', 'anular', 'convert', 'estado'].includes(act) && !puedeGestionar(modulo)) return toast('Tu rol no tiene permiso para esta acción.', 'bad');
     if (act === 'pdf') { printDoc(tipo, d); audit('Descargar', ent, d.numero, 'PDF generado'); persist(); }
     if (act === 'word') { downloadWord(tipo, d); audit('Descargar', ent, d.numero, 'Word generado'); persist(); }
     if (act === 'mail') sendMail(tipo, d);
@@ -594,7 +711,7 @@ function CotDetalle(id, tab = 'doc') {
   const e = cotEstado(c);
   view.innerHTML = pageHead(`${c.numero} ${badge(e)}`, `${esc(c.proyecto)} · ${esc(clienteNombre(c.clienteId))}`, docActions('cotizacion', c), `<a href="#/cotizaciones">Presupuestos</a> / ${c.numero}`) +
     `${c.facturaId ? `<div class="card card-pad" style="margin-bottom:16px;display:flex;gap:10px;align-items:center;border-color:var(--info)">${ico('invoice')}<span>Convertido en factura <a href="#/facturas/${c.facturaId}"><b>${getFac(c.facturaId)?.numero}</b></a> (${facturaEstado(getFac(c.facturaId))})</span></div>` : ''}
-    ${['Borrador', 'Enviado'].includes(c.estado) ? `<div class="card card-pad" style="margin-bottom:16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span style="color:var(--text-2)">Cambiar estado:</span>${['Borrador', 'Enviado', 'Aprobado'].filter((x) => x !== c.estado).map((x) => `<button class="btn sm" data-act="estado" data-val="${x}">Marcar como ${x}</button>`).join('')}</div>` : ''}
+    ${puedeGestionar('cotizaciones') && ['Borrador', 'Enviado'].includes(c.estado) ? `<div class="card card-pad" style="margin-bottom:16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span style="color:var(--text-2)">Cambiar estado:</span>${['Borrador', 'Enviado', 'Aprobado'].filter((x) => x !== c.estado).map((x) => `<button class="btn sm" data-act="estado" data-val="${x}">Marcar como ${x}</button>`).join('')}</div>` : ''}
     <div class="card"><div class="tabs">${[['doc', 'Documento'], ['fin', 'Control financiero'], ['hist', 'Historial']].map(([k, l]) => `<button class="${tab === k ? 'on' : ''}" onclick="go('/cotizaciones/${id}?tab=${k}')">${l}</button>`).join('')}</div>
     ${tab === 'doc' ? docPreview('cotizacion', c) : tab === 'fin' ? finPanel(c) : `<div class="card-pad">${historyFor(c.numero)}</div>`}</div>`;
   bindDocActions('cotizacion', c);
@@ -618,7 +735,7 @@ function Abonos() {
   const proyectos = DB.cotizaciones.filter((c) => ['Aprobado', 'Facturado'].includes(c.estado)).map((c) => ({ ...c, _r: proyectoResumen(c) }));
   const totalAb = sumAbonos(DB.abonos.filter((a) => a.estado !== 'Anulado'));
   const saldo = proyectos.reduce((s, p) => s + p._r.saldo, 0);
-  view.innerHTML = pageHead('Cobros', 'Pagos parciales, anticipos y control financiero por proyecto', `<a class="btn primary" href="#/abonos/nuevo">${ico('plus')}Registrar cobro</a>`) +
+  view.innerHTML = pageHead('Cobros', 'Pagos parciales, anticipos y control financiero por proyecto', puedeGestionar('abonos') ? `<a class="btn primary" href="#/abonos/nuevo">${ico('plus')}Registrar cobro</a>` : '') +
     `<div class="grid g-kpi">${[['Total cobrado', fmtMoney(totalAb), 'wallet'], ['Proyectos activos', proyectos.filter((p) => p._r.saldo > 0).length, 'quote'], ['Saldo por cobrar', fmtMoney(saldo), 'alert'], ['Cobrado este mes', fmtMoney(sumAbonos(DB.abonos.filter((a) => a.estado !== 'Anulado' && a.fecha.startsWith(todayISO().slice(0, 7))))), 'cash']].map(([l, v, i]) => `<div class="card kpi"><span class="lbl"><span class="ico">${ico(i)}</span>${l}</span><span class="val">${v}</span></div>`).join('')}</div>
     <div class="card mt"><div class="card-head"><div><h3>Control financiero por proyecto</h3><p>Total proyecto · total cobrado · saldo pendiente</p></div></div><div id="tblP"></div></div>
     <div class="card mt"><div class="card-head"><h3>Historial de cobros</h3></div><div id="tbl"></div></div>`;
@@ -645,6 +762,7 @@ function Abonos() {
   });
 }
 function AbonoForm(query = {}) {
+  if (denyGestionar('abonos', '/abonos')) return;
   const fac0 = query.fac ? getFac(query.fac) : null;
   const cot0 = query.cot ? getCot(query.cot) : fac0?.cotizacionId ? getCot(fac0.cotizacionId) : null;
   const cli0 = cot0?.clienteId || fac0?.clienteId || query.cli || '';
@@ -712,8 +830,9 @@ function AbonoForm(query = {}) {
 }
 function AbonoDetalle(id) {
   const a = getAbo(id); if (!a) return notFound();
+  const manage = puedeGestionar('abonos');
   view.innerHTML = pageHead(`${a.numero} ${badge(a.estado)}`, `${esc(a.concepto)} · ${esc(clienteNombre(a.clienteId))} · ${fmtMoney(a.valor)}`,
-    `<button class="btn" data-act="mail">${ico('mail')}Enviar</button><button class="btn" data-act="pdf">${ico('download')}PDF</button>${isWordDoc(a) ? `<button class="btn" data-act="word">${ico('download')}Word</button>` : ''}<button class="btn" data-act="sign">${ico('pen')}Firmar</button>${a.estado !== 'Anulado' ? `<button class="btn danger" id="anular">${ico('x')}Anular</button>` : ''}`,
+    `<button class="btn" data-act="mail">${ico('mail')}Enviar</button><button class="btn" data-act="pdf">${ico('download')}PDF</button>${isWordDoc(a) ? `<button class="btn" data-act="word">${ico('download')}Word</button>` : ''}${manage ? `<button class="btn" data-act="sign">${ico('pen')}Firmar</button>` : ''}${manage && a.estado !== 'Anulado' ? `<button class="btn danger" id="anular">${ico('x')}Anular</button>` : ''}`,
     `<a href="#/abonos">Cobros</a> / ${a.numero}`) +
     `<div class="grid g-main"><div class="card">${docPreview('abono', a)}</div><div class="grid" style="align-content:start">
       <div class="card card-pad"><div class="kv" style="grid-template-columns:1fr 1fr">${[['Presupuesto', getCot(a.cotizacionId) ? `<a href="#/cotizaciones/${a.cotizacionId}">${getCot(a.cotizacionId).numero}</a>` : '—'], ['Factura', getFac(a.facturaId) ? `<a href="#/facturas/${a.facturaId}">${getFac(a.facturaId).numero}</a>` : '—'], ['Forma de pago', esc(a.formaPago)], ['Banco', esc(a.banco)], ['Referencia', esc(a.referencia || '—')], ['Registrado por', esc(a.creadoPor)]].map(([k, v]) => `<div><small>${k}</small><span>${v}</span></div>`).join('')}</div></div>
@@ -741,7 +860,7 @@ function facColumns(withClient = true) {
   ];
 }
 function Facturas(query = {}) {
-  view.innerHTML = pageHead('Facturación', 'Facturas emitidas, pagos a cuenta y saldos', `<a class="btn primary" href="#/facturas/nueva">${ico('plus')}Nueva factura</a>`) + `<div class="card" id="tbl"></div>`;
+  view.innerHTML = pageHead('Facturación', 'Facturas emitidas, pagos a cuenta y saldos', puedeGestionar('facturas') ? `<a class="btn primary" href="#/facturas/nueva">${ico('plus')}Nueva factura</a>` : '') + `<div class="card" id="tbl"></div>`;
   DataTable($('#tbl'), {
     rows: () => DB.facturas, placeholder: 'Número, cliente, NIF, presupuesto…',
     searchText: (f) => [f.numero, clienteNombre(f.clienteId), getCliente(f.clienteId)?.nit, getCot(f.cotizacionId)?.numero, getCot(f.cotizacionId)?.proyecto].join(' '),
@@ -918,7 +1037,8 @@ function sampleDoc(tipo) {
 }
 function Plantillas() {
   const tipos = [['cotizacion', 'Presupuestos'], ['factura', 'Facturas'], ['abono', 'Recibos de pago']];
-  view.innerHTML = pageHead('Plantillas de documentos', 'Diseño de presupuestos, facturas y recibos. Cada cambio crea una versión nueva: los documentos ya emitidos conservan su diseño original.', `<button class="btn primary" id="newTpl">${ico('plus')}Nueva plantilla</button>`) +
+  const puede = puedeGestionar('plantillas');
+  view.innerHTML = pageHead('Plantillas de documentos', 'Diseño de presupuestos, facturas y recibos. Cada cambio crea una versión nueva: los documentos ya emitidos conservan su diseño original.', puede ? `<button class="btn primary" id="newTpl">${ico('plus')}Nueva plantilla</button>` : '') +
     tipos.map(([t, l]) => `<h3 style="margin:22px 0 10px;font-size:15px">${l}</h3><div class="grid g-3">${DB.plantillas.filter((p) => p.tipo === t).map((p) => {
       const v = p.versiones[p.versiones.length - 1], s = sampleDoc(t);
       return `<a class="card tpl-card" href="#/plantillas/${p.id}" style="color:inherit"><div class="tpl-thumb">${v.config.formato === 'word' && v.config.docx ? `<div style="height:100%;display:grid;place-items:center;text-align:center;background:var(--brand-50);color:var(--brand)"><div><div class="file-ico" style="background:#2b579a;margin:0 auto 6px;width:44px;height:44px;font-size:11px">DOCX</div><small>${esc(v.config.docxNombre || 'Plantilla Word')}</small></div></div>` : s ? `<div class="tpl-scale">${renderDoc(t, s, v.config)}</div>` : ''}</div>
@@ -926,6 +1046,7 @@ function Plantillas() {
         <small style="color:var(--text-3)">v${v.version} · modificada ${fmtDate(v.fecha)} por ${esc(v.usuario)}</small>
         <div class="swatches"><i style="width:16px;height:16px;border-radius:4px;background:${v.config.color}"></i><i style="width:16px;height:16px;border-radius:4px;background:${v.config.color2}"></i><small style="color:var(--text-3)">${v.config.formato === 'word' && v.config.docx ? 'Plantilla Word' : v.config.html ? 'HTML personalizado' : v.config.bloques.filter((b) => b.on).length + ' bloques'}</small></div></a>`;
     }).join('')}</div>`).join('');
+  if (!puede) return;
   $('#newTpl').addEventListener('click', () => modal({
     title: 'Nueva plantilla', okText: 'Crear',
     body: `<div class="form-grid"><div class="f s12"><label>Nombre</label><input class="in" name="n" placeholder="Ej. Presupuesto premium"></div><div class="f s12"><label>Tipo de documento</label><select class="in" name="t">${tipos.map(([t, l]) => `<option value="${t}">${l}</option>`).join('')}</select></div>
@@ -943,6 +1064,7 @@ function Plantillas() {
 }
 function PlantillaEditor(id, query = {}) {
   const p = DB.plantillas.find((x) => x.id === id); if (!p) return notFound();
+  const puede = puedeGestionar('plantillas');
   const viewV = query.v ? p.versiones.find((v) => v.version === +query.v) : null;
   const cur = p.versiones[p.versiones.length - 1];
   const cfg = clone((viewV || cur).config);
@@ -950,7 +1072,7 @@ function PlantillaEditor(id, query = {}) {
   let nombre = p.nombre;
   const usados = { cotizacion: DB.cotizaciones, factura: DB.facturas, abono: DB.abonos }[p.tipo].filter((d) => d.plantilla?.id === p.id).length;
   view.innerHTML = pageHead(`${esc(p.nombre)} ${badge(p.estado)}`, `${{ cotizacion: 'Presupuesto', factura: 'Factura', abono: 'Cobro' }[p.tipo]} · ${viewV ? `viendo versión ${viewV.version} (histórica)` : `versión actual v${cur.version}`} · usada por ${usados} documento(s)`,
-    `${p.estado !== 'Activa' ? `<button class="btn" id="activar">${ico('check')}Activar</button>` : ''}${viewV ? `<a class="btn" href="#/plantillas/${id}">Volver a la actual</a><button class="btn primary" id="restore">${ico('clock')}Restaurar esta versión</button>` : `<button class="btn primary" id="save">${ico('check')}Guardar como v${cur.version + 1}</button>`}`,
+    !puede ? '' : `${p.estado !== 'Activa' ? `<button class="btn" id="activar">${ico('check')}Activar</button>` : ''}${viewV ? `<a class="btn" href="#/plantillas/${id}">Volver a la actual</a><button class="btn primary" id="restore">${ico('clock')}Restaurar esta versión</button>` : `<button class="btn primary" id="save">${ico('check')}Guardar como v${cur.version + 1}</button>`}`,
     `<a href="#/plantillas">Plantillas</a> / ${esc(p.nombre)}`) +
     `<div class="tpl-layout"><div class="grid">
       <div class="card"><div class="tabs" id="tplTabs"><button class="on" data-t="word">Plantilla Word</button><button data-t="dis">Diseño</button><button data-t="blo">Bloques</button><button data-t="html">HTML / PDF</button><button data-t="ver">Versiones</button></div><div class="card-pad" id="tplPane"></div></div>
@@ -1261,10 +1383,11 @@ function uploadDialog(files, preset = {}, done) {
 function Documentos(query = {}) {
   const st = { cli: query.cli || '', proy: query.proy ?? null, cat: '', q: '' };
   const all = () => [...DB.documentos, ...generatedDocs()];
-  view.innerHTML = pageHead('Gestión documental', 'Carpetas automáticas por cliente y proyecto · control de versiones, etiquetas y auditoría', `<button class="btn primary" id="upBtn">${ico('upload')}Subir archivos</button>`) +
+  const puede = puedeGestionar('documentos');
+  view.innerHTML = pageHead('Gestión documental', 'Carpetas automáticas por cliente y proyecto · control de versiones, etiquetas y auditoría', puede ? `<button class="btn primary" id="upBtn">${ico('upload')}Subir archivos</button>` : '') +
     `<div class="folders"><div class="card"><div class="card-head"><h3>Carpetas</h3></div><ul class="tree" id="tree"></ul></div>
      <div class="card"><div class="tbl-tools"><div class="search">${ico('search')}<input type="search" id="dq" placeholder="Nombre, etiqueta, proyecto…"></div><div class="chips" id="cats">${['', 'Presupuesto', 'Factura', 'Cobro', 'Contrato', 'Imagen', 'Documento legal', 'Justificante de pago'].map((c) => `<button class="chip ${c === '' ? 'on' : ''}" data-c="${c}">${c || 'Todos'}</button>`).join('')}</div></div>
-     <div class="card-pad" style="padding-top:8px"><div class="drop" id="drop" style="padding:14px;margin-bottom:6px">${ico('upload')} <b>Arrastra archivos aquí</b> para guardarlos en la carpeta seleccionada</div><div id="list"></div></div></div></div>`;
+     <div class="card-pad" style="padding-top:8px">${puede ? `<div class="drop" id="drop" style="padding:14px;margin-bottom:6px">${ico('upload')} <b>Arrastra archivos aquí</b> para guardarlos en la carpeta seleccionada</div>` : ''}<div id="list"></div></div></div></div>`;
   const renderTree = () => {
     const docs = all();
     $('#tree').innerHTML = `<li><a href="#" data-cli="" class="${!st.cli ? 'on' : ''}">${ico('folder')}Todos los documentos<span class="count">${docs.length}</span></a></li>` +
@@ -1285,9 +1408,11 @@ function Documentos(query = {}) {
   $('#tree').addEventListener('click', (e) => { const a = e.target.closest('a'); if (!a) return; e.preventDefault(); st.cli = a.dataset.cli; st.proy = a.dataset.proy === undefined || a.dataset.proy === '' && !a.closest('ul ul') ? null : a.dataset.proy; renderTree(); renderList(); });
   $('#cats').addEventListener('click', (e) => { const b = e.target.closest('[data-c]'); if (!b) return; st.cat = b.dataset.c; $$('#cats .chip').forEach((c) => c.classList.toggle('on', c === b)); renderList(); });
   $('#dq').addEventListener('input', (e) => { st.q = e.target.value; renderList(); });
-  const up = (files) => uploadDialog(files, { clienteId: st.cli || DB.clientes[0]?.id, proyecto: st.proy || '' }, () => { renderTree(); renderList(); });
-  setupDrop($('#drop'), up);
-  $('#upBtn').addEventListener('click', () => $('#drop input').click());
+  if (puede) {
+    const up = (files) => uploadDialog(files, { clienteId: st.cli || DB.clientes[0]?.id, proyecto: st.proy || '' }, () => { renderTree(); renderList(); });
+    setupDrop($('#drop'), up);
+    $('#upBtn').addEventListener('click', () => $('#drop input').click());
+  }
   bindDocRows($('#list'));
   renderTree(); renderList();
 }
@@ -1317,15 +1442,181 @@ function Auditoria() {
   $('#audUser').addEventListener('change', (e) => { userF = e.target.value; dt.render(); });
 }
 
+/* ==========================================================
+   MÓDULO 10 · USUARIOS Y PERMISOS
+   ========================================================== */
+function Usuarios(query = {}) {
+  const tab = query.tab === 'roles' ? 'roles' : 'usuarios';
+  view.innerHTML = pageHead('Usuarios y permisos', 'Gestiona quién puede entrar al sistema y qué puede hacer en cada módulo') +
+    `<div class="card"><div class="tabs">${[['usuarios', `Usuarios (${DB.usuarios.length})`], ['roles', `Roles y permisos (${DB.roles.length})`]].map(([k, l]) => `<button class="${tab === k ? 'on' : ''}" onclick="go('/usuarios?tab=${k}')">${l}</button>`).join('')}</div><div id="tabBody"></div></div>`;
+  const body = $('#tabBody');
+  if (tab === 'roles') renderRolesTab(body); else renderUsuariosTab(body);
+}
+function renderUsuariosTab(body) {
+  const puede = puedeGestionar('usuarios');
+  body.innerHTML = `<div class="card-pad" style="padding-bottom:0"><div class="btn-row" style="justify-content:flex-end">${puede ? `<a class="btn primary" href="#/usuarios/nuevo">${ico('plus')}Nuevo usuario</a>` : ''}</div></div><div id="uTbl"></div>`;
+  DataTable($('#uTbl'), {
+    rows: () => DB.usuarios,
+    placeholder: 'Nombre, correo, rol…',
+    searchText: (u) => [u.codigo, u.nombre, u.email, rolDe(u)?.nombre].join(' '),
+    chips: [{ k: 'all', label: 'Todos' }, { k: 'activos', label: 'Activos', test: (u) => u.activo !== false }, { k: 'inactivos', label: 'Inactivos', test: (u) => u.activo === false }],
+    sort: 'nombre', dir: 1,
+    columns: [
+      { k: 'codigo', label: 'Código', render: (u) => `<span class="muted">${esc(u.codigo || '—')}</span>` },
+      { k: 'nombre', label: 'Nombre', sort: (u) => u.nombre, render: (u) => `<div class="strong">${esc(u.nombre)}${u.id === DB.usuarioActual ? ' <span class="badge b-info">Sesión actual</span>' : ''}</div><div class="muted">${esc(u.email || '')}</div>` },
+      { k: 'rol', label: 'Rol', sort: (u) => rolDe(u)?.nombre || '', render: (u) => `<span class="tag">${esc(rolDe(u)?.nombre || '—')}</span>` },
+      { k: 'estado', label: 'Estado', render: (u) => badge(u.activo === false ? 'Inactiva' : 'Activa') },
+    ],
+    onRow: puede ? (u) => go('/usuarios/' + u.id + '/editar') : null,
+    empty: 'Sin usuarios registrados.',
+  });
+}
+function renderRolesTab(body) {
+  const puede = puedeGestionar('usuarios');
+  body.innerHTML = `<div class="card-pad" style="padding-bottom:0"><div class="btn-row" style="justify-content:flex-end">${puede ? `<a class="btn primary" href="#/usuarios/rol/nuevo">${ico('plus')}Nuevo rol</a>` : ''}</div></div>
+    <div class="grid g-3" style="padding:0 20px 20px">${DB.roles.map((r) => {
+      const nUsers = DB.usuarios.filter((u) => u.rolId === r.id).length;
+      const resumen = MODULOS.filter((m) => r.permisos[m.k] === 'gestionar').length;
+      return `<a class="card" style="padding:16px;color:inherit" href="#/usuarios/rol/${r.id}">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><b>${esc(r.nombre)}</b>${r.sistema ? '<span class="tag">Sistema</span>' : ''}</div>
+        <p style="margin:6px 0;color:var(--text-2);font-size:13px">${esc(r.descripcion || '')}</p>
+        <small class="muted">${nUsers} usuario(s) · gestiona ${resumen} de ${MODULOS.length} módulos</small></a>`;
+    }).join('')}</div>`;
+}
+function UsuarioForm(id) {
+  if (denyGestionar('usuarios', '/usuarios')) return;
+  const u = id ? DB.usuarios.find((x) => x.id === id) : { codigo: '(se asigna al guardar)', activo: true, rolId: DB.roles[0]?.id };
+  if (id && !u) return notFound();
+  view.innerHTML = pageHead(id ? 'Editar usuario' : 'Nuevo usuario', id ? esc(u.nombre) : 'Crea un acceso y asígnale un rol con permisos', '', `<a href="#/usuarios">Usuarios y permisos</a> / ${id ? esc(u.nombre) : 'Nuevo'}`) +
+    `<form class="card card-pad" id="frm" novalidate><div class="form-grid">
+      <div class="section-title">Identificación</div>
+      <div class="f s3"><label>Código</label><input class="in" value="${esc(u.codigo || '(se asigna al guardar)')}" readonly></div>
+      <div class="f s5"><label>Nombre completo <span class="req">*</span></label><input class="in" name="nombre" value="${esc(u.nombre || '')}"></div>
+      <div class="f s4"><label>Correo electrónico</label><input class="in" name="email" type="email" value="${esc(u.email || '')}"></div>
+      <div class="section-title">Acceso</div>
+      <div class="f s6"><label>Rol <span class="req">*</span></label><select class="in" name="rolId">${DB.roles.map((r) => `<option value="${r.id}" ${r.id === u.rolId ? 'selected' : ''}>${esc(r.nombre)}</option>`).join('')}</select><span class="hint" id="rolHint">${esc(getRol(u.rolId)?.descripcion || '')}</span></div>
+      <div class="f s3"><label>Estado</label><select class="in" name="activo"><option value="true" ${u.activo !== false ? 'selected' : ''}>Activo</option><option value="false" ${u.activo === false ? 'selected' : ''}>Inactivo</option></select></div>
+      <div class="section-title">Seguridad</div>
+      ${id ? `<div class="f s6"><label>Contraseña</label><div style="display:flex;align-items:center;gap:10px;height:38px"><span class="badge ${u.passHash ? 'b-ok' : 'b-muted'}">${u.passHash ? 'Configurada' : 'Sin contraseña'}</span><button type="button" class="btn sm" id="chPass">${ico('shield')}${u.passHash ? 'Cambiar' : 'Establecer'} contraseña</button></div></div>`
+        : `<div class="f s12"><span class="hint">Podrás establecer una contraseña para este usuario después de guardarlo.</span></div>`}
+    </div>
+    <div class="btn-row" style="justify-content:flex-end;margin-top:18px"><a class="btn" href="#/usuarios">Cancelar</a><button class="btn primary">${ico('check')}Guardar usuario</button></div></form>`;
+  const form = $('#frm');
+  form.rolId.addEventListener('change', () => { $('#rolHint').textContent = getRol(form.rolId.value)?.descripcion || ''; });
+  $('#chPass')?.addEventListener('click', () => changePasswordDialog(u));
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const nombre = form.nombre.value.trim();
+    form.nombre.classList.toggle('invalid', !nombre);
+    if (!nombre) return toast('El nombre es obligatorio.', 'bad');
+    const v = { nombre, email: form.email.value.trim(), rolId: form.rolId.value, activo: form.activo.value === 'true' };
+    if (id) {
+      const willManage = v.activo && getRol(v.rolId)?.permisos?.usuarios === 'gestionar';
+      if (u.id === DB.usuarioActual && !willManage && !DB.usuarios.some((x) => x.id !== u.id && x.activo !== false && permisoModulo('usuarios', x) === 'gestionar')) {
+        return toast('No puedes quitarte el acceso de gestión de usuarios: eres el único con este permiso.', 'bad');
+      }
+      const before = clone(u); Object.assign(u, v, { actualizado: new Date().toISOString() });
+      audit('Editar', 'Usuario', u.codigo || u.nombre, u.nombre, diffObjects(before, u));
+    } else {
+      const n = { id: uid('usr'), codigo: Store.nextNumber('USR'), ...v, passHash: '', creado: new Date().toISOString(), creadoPor: Store.user().nombre };
+      DB.usuarios.push(n); audit('Crear', 'Usuario', n.codigo, n.nombre);
+    }
+    persist(); toast('Usuario guardado'); go('/usuarios');
+  });
+}
+/* Diálogo para establecer, cambiar o quitar la contraseña de un usuario (solo quien gestiona el módulo Usuarios) */
+function changePasswordDialog(u) {
+  modal({
+    title: 'Contraseña · ' + u.nombre, okText: 'Guardar',
+    body: `<div class="form-grid">
+      <div class="f s12"><label>Nueva contraseña</label><input class="in" type="password" id="np" autocomplete="new-password" placeholder="Déjalo en blanco para quitar la contraseña"></div>
+      <div class="f s12"><label>Confirmar contraseña</label><input class="in" type="password" id="np2" autocomplete="new-password"></div>
+      <div class="f s12"><span class="hint">Mínimo 4 caracteres. Se guarda solo como huella (hash) en este navegador; no es una autenticación de servidor, sirve para evitar cambios de sesión accidentales entre compañeros.</span></div>
+    </div>`,
+    onOk: async (ov) => {
+      const p1 = $('#np', ov).value, p2 = $('#np2', ov).value;
+      if (p1 !== p2) { toast('Las contraseñas no coinciden.', 'bad'); return false; }
+      if (p1 && p1.length < 4) { toast('La contraseña debe tener al menos 4 caracteres.', 'bad'); return false; }
+      await setPassword(u, p1);
+      audit('Editar', 'Usuario', u.codigo || u.nombre, p1 ? 'Contraseña actualizada' : 'Contraseña eliminada');
+      persist(); toast(p1 ? 'Contraseña actualizada' : 'Contraseña eliminada'); route();
+    },
+  });
+}
+/* Pide la contraseña de un usuario antes de activar su sesión; resuelve true/false */
+function askPassword(u) {
+  return new Promise((resolve) => {
+    let ok = false;
+    const m = modal({
+      title: `Contraseña de ${u.nombre}`, okText: 'Entrar',
+      body: `<div class="f s12"><label>Contraseña</label><input class="in" type="password" id="pwIn" autocomplete="current-password"></div><p class="hint" id="pwErr" style="color:var(--bad);margin-top:8px"></p>`,
+      onOk: async (ov) => {
+        const valido = await checkPassword(u, $('#pwIn', ov).value);
+        if (!valido) { $('#pwErr', ov).textContent = 'Contraseña incorrecta.'; return false; }
+        ok = true;
+      },
+    });
+    const obs = new MutationObserver(() => { if (!document.body.contains(m.el)) { obs.disconnect(); resolve(ok); } });
+    obs.observe(document.body, { childList: true });
+  });
+}
+function RolForm(id) {
+  if (denyGestionar('usuarios', '/usuarios?tab=roles')) return;
+  const r = id ? getRol(id) : { nombre: '', descripcion: '', sistema: false, permisos: {} };
+  if (id && !r) return notFound();
+  const perms = { ...Object.fromEntries(MODULOS.map((m) => [m.k, 'ninguno'])), ...(r.permisos || {}) };
+  const locked = !!r.sistema;
+  view.innerHTML = pageHead(id ? `Editar rol: ${esc(r.nombre)}` : 'Nuevo rol', locked ? 'Este rol es del sistema y no se puede modificar: así siempre queda al menos un rol con acceso total.' : 'Define qué puede ver y gestionar este rol en cada módulo', '', `<a href="#/usuarios?tab=roles">Usuarios y permisos</a> / ${id ? esc(r.nombre) : 'Nuevo'}`) +
+    `<form class="card card-pad" id="frm" novalidate><div class="form-grid">
+      <div class="f s6"><label>Nombre del rol <span class="req">*</span></label><input class="in" name="nombre" value="${esc(r.nombre)}" ${locked ? 'readonly' : ''}></div>
+      <div class="f s12"><label>Descripción</label><input class="in" name="descripcion" value="${esc(r.descripcion || '')}" ${locked ? 'readonly' : ''}></div>
+    </div>
+    <div class="section-title" style="margin-top:18px">Permisos por módulo</div>
+    <div class="tbl-wrap mt"><table class="tbl"><thead><tr><th>Módulo</th>${PERM_LEVELS.map((p) => `<th style="text-align:center">${p.label}</th>`).join('')}</tr></thead><tbody>
+      ${MODULOS.map((m) => `<tr><td>${esc(m.label)}</td>${PERM_LEVELS.map((p) => `<td style="text-align:center"><input type="radio" name="p_${m.k}" value="${p.k}" ${perms[m.k] === p.k ? 'checked' : ''} ${locked ? 'disabled' : ''}></td>`).join('')}</tr>`).join('')}
+    </tbody></table></div>
+    <div class="btn-row" style="justify-content:flex-end;margin-top:18px">
+      <a class="btn" href="#/usuarios?tab=roles">Cancelar</a>
+      ${!locked && id ? `<button type="button" class="btn danger" id="delRol">${ico('trash')}Eliminar rol</button>` : ''}
+      ${!locked ? `<button class="btn primary">${ico('check')}Guardar rol</button>` : ''}
+    </div></form>`;
+  if (locked) return;
+  const form = $('#frm');
+  $('#delRol')?.addEventListener('click', async () => {
+    const enUso = DB.usuarios.filter((u) => u.rolId === r.id).length;
+    if (enUso) return toast(`No puedes eliminar este rol: ${enUso} usuario(s) lo tienen asignado.`, 'bad');
+    if (!(await confirmBox('Eliminar rol', `Se eliminará el rol "${esc(r.nombre)}".`, 'Eliminar'))) return;
+    DB.roles = DB.roles.filter((x) => x.id !== r.id); audit('Eliminar', 'Rol', r.nombre, ''); persist(); toast('Rol eliminado'); go('/usuarios?tab=roles');
+  });
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const nombre = form.nombre.value.trim();
+    form.nombre.classList.toggle('invalid', !nombre);
+    if (!nombre) return toast('El nombre del rol es obligatorio.', 'bad');
+    const permisos = {}; MODULOS.forEach((m) => { permisos[m.k] = form[`p_${m.k}`].value; });
+    if (id && !tendriaAccesoAdmin(id, permisos)) return toast('Esta configuración dejaría a nadie con permiso para gestionar usuarios y roles. Ajusta los permisos antes de guardar.', 'bad');
+    if (id) {
+      const before = clone(r); Object.assign(r, { nombre, descripcion: form.descripcion.value.trim(), permisos }, { actualizado: new Date().toISOString() });
+      audit('Editar', 'Rol', r.nombre, '', diffObjects(before, r));
+    } else {
+      const n = { id: uid('rol'), nombre, descripcion: form.descripcion.value.trim(), sistema: false, permisos };
+      DB.roles.push(n); audit('Crear', 'Rol', n.nombre, '');
+    }
+    persist(); toast('Rol guardado'); go('/usuarios?tab=roles');
+  });
+}
+
 /* ---------------- Configuración ---------------- */
 function Config() {
   const E = DB.empresa;
+  const puede = puedeGestionar('config');
   const F = [['sec', 'Datos del emisor'], ['razonSocial', 'Razón social', 's6'], ['nit', 'NIF / CIF', 's3'], ['telefono', 'Teléfono', 's3'], ['direccion', 'Dirección', 's6'], ['codigoPostal', 'Código postal', 's2'], ['ciudad', 'Localidad', 's2'], ['provincia', 'Provincia', 's2'], ['pais', 'País', 's3'], ['email', 'Correo', 's3'],
     ['sec', 'Moneda e impuestos'], ['moneda', 'Moneda', 's3', { options: Object.keys(MONEDAS) }], ['ivaDefault', 'IVA por defecto (%)', 's3', { type: 'number' }], ['sec', 'Datos bancarios por defecto'], ['banco', 'Banco', 's3'], ['titular', 'Titular', 's3'], ['cuenta', 'Cuenta (IBAN)', 's6']];
-  view.innerHTML = pageHead('Configuración', 'Datos de la empresa emisora, respaldo y restauración') +
-    `<form class="card card-pad" id="frm"><div class="form-grid">${F.map((f) => fieldHTML(f, E[f[0]])).join('')}</div><div class="btn-row" style="justify-content:flex-end;margin-top:16px"><button class="btn primary">Guardar</button></div></form>
-    <div class="card card-pad mt"><h3 style="font-size:15px;margin-bottom:6px">Respaldo de datos</h3><p class="hint" style="margin-top:0">Esta versión guarda la información en el navegador. Descarga un respaldo periódicamente o conéctala a Supabase para trabajo multiusuario (ver <code>supabase_facturacion.sql</code>).</p>
-    <div class="btn-row"><button class="btn" id="exp">${ico('download')}Exportar respaldo (.json)</button><label class="btn">${ico('upload')}Importar respaldo<input type="file" accept=".json" id="imp" hidden></label><button class="btn danger" id="rst">${ico('trash')}Restaurar datos de ejemplo</button></div></div>`;
+  view.innerHTML = pageHead('Configuración', 'Datos de la empresa emisora, respaldo y restauración' + (puede ? '' : ' · solo lectura para tu rol')) +
+    `<form class="card card-pad" id="frm"><fieldset ${puede ? '' : 'disabled'} style="border:0;padding:0;margin:0"><div class="form-grid">${F.map((f) => fieldHTML(f, E[f[0]])).join('')}</div>${puede ? `<div class="btn-row" style="justify-content:flex-end;margin-top:16px"><button class="btn primary">Guardar</button></div>` : ''}</fieldset></form>
+    ${puede ? `<div class="card card-pad mt"><h3 style="font-size:15px;margin-bottom:6px">Respaldo de datos</h3><p class="hint" style="margin-top:0">Esta versión guarda la información en el navegador. Descarga un respaldo periódicamente o conéctala a Supabase para trabajo multiusuario (ver <code>supabase_facturacion.sql</code>).</p>
+    <div class="btn-row"><button class="btn" id="exp">${ico('download')}Exportar respaldo (.json)</button><label class="btn">${ico('upload')}Importar respaldo<input type="file" accept=".json" id="imp" hidden></label><button class="btn danger" id="rst">${ico('trash')}Restaurar datos de ejemplo</button></div></div>` : ''}`;
+  if (!puede) return;
   $('#frm').addEventListener('submit', (e) => { e.preventDefault(); const before = clone(E); Object.assign(E, formValues(e.target)); audit('Editar', 'Configuración', 'Empresa', 'Datos del emisor', diffObjects(before, E)); persist(); toast('Configuración guardada'); });
   $('#exp').addEventListener('click', () => { downloadFile(`taseca-facturacion-respaldo-${todayISO()}.json`, JSON.stringify(DB, null, 2), 'application/json'); audit('Descargar', 'Configuración', 'Respaldo', 'Exportación completa'); persist(); });
   $('#imp').addEventListener('change', async (e) => {
@@ -1336,14 +1627,27 @@ function Config() {
   $('#rst').addEventListener('click', async () => { if (await confirmBox('Restaurar datos de ejemplo', 'Se borrarán todos los datos actuales de este navegador. Exporta un respaldo antes si lo necesitas.', 'Restaurar')) { Store.reset(); toast('Datos de ejemplo restaurados'); route(); } });
 }
 function notFound() { view.innerHTML = pageHead('No encontrado', 'El registro no existe o fue eliminado.', `<a class="btn" href="#/dashboard">Ir al panel</a>`); }
+/* true + redirige si el usuario actual no puede gestionar (crear/editar/eliminar) el módulo */
+function denyGestionar(modulo, redirect) {
+  if (puedeGestionar(modulo)) return false;
+  toast('Tu rol no tiene permiso para gestionar este módulo.', 'bad');
+  go(redirect);
+  return true;
+}
 
 /* ---------------- Arranque ---------------- */
 function initShell() {
   const sel = $('#userSel');
-  sel.innerHTML = USERS.map((u) => `<option value="${u.id}">${u.nombre} · ${u.rol}</option>`).join('');
-  const syncUser = () => { sel.value = DB.usuarioActual; $('#avatar').textContent = Store.user().nombre.split(' ').map((x) => x[0]).slice(0, 2).join(''); };
-  sel.addEventListener('change', () => { DB.usuarioActual = sel.value; persist(); syncUser(); toast('Sesión: ' + Store.user().nombre); });
+  const syncSel = () => { sel.innerHTML = DB.usuarios.filter((u) => u.activo !== false).map((u) => `<option value="${u.id}">${esc(u.nombre)} · ${esc(rolDe(u)?.nombre || '')}</option>`).join(''); };
+  syncSel();
+  const syncUser = () => { syncSel(); sel.value = DB.usuarioActual; $('#avatar').textContent = Store.user().nombre.split(' ').map((x) => x[0]).slice(0, 2).join(''); };
+  sel.addEventListener('change', async () => {
+    const target = DB.usuarios.find((u) => u.id === sel.value);
+    if (target?.passHash && !(await askPassword(target))) { sel.value = DB.usuarioActual; return; }
+    DB.usuarioActual = sel.value; persist(); setLoggedIn(sel.value); syncUser(); toast('Sesión: ' + Store.user().nombre); route();
+  });
   syncUser();
+  $('#logoutBtn').addEventListener('click', () => { clearLoggedIn(); location.hash = ''; showLogin(); });
   const setThemeIcon = () => { const dark = document.documentElement.dataset.theme === 'dark' || (!document.documentElement.dataset.theme && matchMedia('(prefers-color-scheme: dark)').matches); $('#themeBtn').innerHTML = ico(dark ? 'sun' : 'moon'); return dark; };
   $('#themeBtn').addEventListener('click', () => {
     const dark = setThemeIcon(); const next = dark ? 'light' : 'dark';
@@ -1362,5 +1666,58 @@ function initShell() {
   document.addEventListener('keydown', (e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); gs.focus(); } });
   document.addEventListener('click', (e) => { if (window.innerWidth <= 900 && !e.target.closest('.sidebar,#menuBtn')) $('#sidebar').classList.remove('open'); });
 }
-initShell();
-route();
+
+/* ---------------- Sesión (pantalla de inicio) ----------------
+   La sesión vive en sessionStorage: se mantiene mientras la pestaña esté abierta,
+   pero pide usuario y contraseña de nuevo si se cierra el navegador o se usa "Cerrar sesión". */
+const SESSION_KEY = 'tsf_session';
+const isLoggedIn = () => { try { return sessionStorage.getItem(SESSION_KEY) === DB.usuarioActual; } catch (e) { return false; } };
+const setLoggedIn = (uid) => { try { sessionStorage.setItem(SESSION_KEY, uid); } catch (e) {} };
+const clearLoggedIn = () => { try { sessionStorage.removeItem(SESSION_KEY); } catch (e) {} };
+let shellReady = false;
+function enterApp() {
+  $('#loginScreen').hidden = true;
+  $('#appShell').hidden = false;
+  if (!shellReady) { initShell(); shellReady = true; }
+  route();
+}
+function showLogin() {
+  $('#appShell').hidden = true;
+  const ls = $('#loginScreen'); ls.hidden = false;
+  const activos = DB.usuarios.filter((u) => u.activo !== false);
+  ls.innerHTML = `<div class="login-card">
+    <div class="login-brand"><div class="brand-mark">Z</div><div><b>ZEWÁ</b><small>Presupuestos y Facturación</small></div></div>
+    <h1>Iniciar sesión</h1>
+    <form id="loginForm" novalidate>
+      <div class="f s12"><label>Usuario</label><select class="in" id="loginUser">${activos.map((u) => `<option value="${u.id}">${esc(u.nombre)} · ${esc(rolDe(u)?.nombre || '')}</option>`).join('')}</select></div>
+      <div class="f s12" id="loginPassWrap"><label>Contraseña</label><input class="in" type="password" id="loginPass" autocomplete="current-password">
+        <div style="text-align:right;margin-top:6px"><a href="#" id="forgotLink" style="font-size:12.5px">¿Olvidaste tu contraseña?</a></div></div>
+      <p class="hint" id="loginErr" style="color:var(--bad);min-height:16px"></p>
+      <button class="btn primary" style="width:100%;justify-content:center" type="submit">${ico('arrow')}Entrar</button>
+    </form>
+  </div>`;
+  if (!activos.length) { ls.innerHTML = `<div class="login-card"><div class="login-brand"><div class="brand-mark">Z</div><div><b>ZEWÁ</b><small>Presupuestos y Facturación</small></div></div><p class="hint">No hay usuarios activos. Restaura un respaldo o los datos de ejemplo para continuar.</p></div>`; return; }
+  const userSel = $('#loginUser', ls), passWrap = $('#loginPassWrap', ls), passIn = $('#loginPass', ls), err = $('#loginErr', ls);
+  const syncPassField = () => { const u = activos.find((x) => x.id === userSel.value); passWrap.style.display = u?.passHash ? '' : 'none'; };
+  userSel.value = activos.some((u) => u.id === DB.usuarioActual) ? DB.usuarioActual : activos[0].id;
+  syncPassField();
+  userSel.addEventListener('change', () => { err.textContent = ''; syncPassField(); });
+  $('#forgotLink', ls).addEventListener('click', async (e) => {
+    e.preventDefault();
+    const u = activos.find((x) => x.id === userSel.value); if (!u) return;
+    if (!(await confirmBox('Quitar contraseña', `Esta aplicación guarda los datos solo en este navegador, sin servidor, así que no existe un correo de recuperación. Se quitará la contraseña de <b>${esc(u.nombre)}</b> (ningún otro dato se borra), y cualquiera con acceso a este navegador podrá entrar como ${esc(u.nombre)} sin contraseña hasta que configures una nueva desde "Usuarios y permisos". ¿Continuar?`, 'Quitar contraseña'))) return;
+    u.passHash = ''; persist();
+    audit('Editar', 'Usuario', u.codigo || u.nombre, 'Contraseña eliminada desde "Olvidé mi contraseña"');
+    err.textContent = ''; passIn.value = ''; syncPassField();
+    toast('Contraseña eliminada. Ya puedes entrar.');
+  });
+  $('#loginForm', ls).addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const u = activos.find((x) => x.id === userSel.value); if (!u) return;
+    if (!(await checkPassword(u, passIn.value))) { err.textContent = 'Contraseña incorrecta.'; passIn.value = ''; passIn.focus(); return; }
+    DB.usuarioActual = u.id; persist(); setLoggedIn(u.id);
+    enterApp();
+  });
+  (passWrap.style.display === 'none' ? userSel : passIn).focus();
+}
+if (isLoggedIn()) enterApp(); else showLogin();

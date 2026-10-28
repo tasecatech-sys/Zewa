@@ -12,7 +12,8 @@
   </script>
 </head>
 <body>
-  <div class="app">
+  <div id="loginScreen" class="login-screen"></div>
+  <div class="app" id="appShell" hidden>
     <aside class="sidebar" id="sidebar">
       <div class="brand">
         <div class="brand-mark">T</div>
@@ -37,6 +38,7 @@
             <div class="avatar" id="avatar">AD</div>
             <select id="userSel" aria-label="Usuario actual"></select>
           </div>
+          <button class="btn icon ghost" id="logoutBtn" title="Cerrar sesión" aria-label="Cerrar sesión"><svg class="i"><use href="#i-back"/></svg></button>
         </div>
       </header>
       <main class="content" id="view"></main>

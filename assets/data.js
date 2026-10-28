@@ -5,11 +5,58 @@
    ========================================================== */
 const DB_KEY = 'tsf_db_v1';
 
-const USERS = [
-  { id: 'admin', nombre: 'Administrador', rol: 'Administrador' },
-  { id: 'comercial', nombre: 'Laura Gómez', rol: 'Comercial' },
-  { id: 'contable', nombre: 'Carlos Ruiz', rol: 'Contabilidad' },
+/* ---------- usuarios, roles y permisos por módulo ---------- */
+const MODULOS = [
+  { k: 'dashboard', label: 'Panel de control' },
+  { k: 'busqueda', label: 'Búsqueda inteligente' },
+  { k: 'clientes', label: 'Clientes' },
+  { k: 'inventario', label: 'Inventario' },
+  { k: 'cotizaciones', label: 'Presupuestos' },
+  { k: 'abonos', label: 'Cobros' },
+  { k: 'facturas', label: 'Facturación' },
+  { k: 'plantillas', label: 'Plantillas' },
+  { k: 'documentos', label: 'Gestión documental' },
+  { k: 'auditoria', label: 'Auditoría' },
+  { k: 'usuarios', label: 'Usuarios y permisos' },
+  { k: 'config', label: 'Configuración' },
 ];
+const PERM_LEVELS = [
+  { k: 'ninguno', label: 'Sin acceso' },
+  { k: 'ver', label: 'Solo ver' },
+  { k: 'gestionar', label: 'Gestionar' },
+];
+function defaultRoles() {
+  const todoGestionar = {}; MODULOS.forEach((m) => { todoGestionar[m.k] = 'gestionar'; });
+  return [
+    { id: 'rol_admin', nombre: 'Administrador', descripcion: 'Acceso completo a todos los módulos, incluida la gestión de usuarios y permisos.', sistema: true, permisos: todoGestionar },
+    { id: 'rol_comercial', nombre: 'Comercial', descripcion: 'Clientes, inventario y presupuestos. Solo lectura de facturación.', sistema: false, permisos: { dashboard: 'ver', busqueda: 'ver', clientes: 'gestionar', inventario: 'ver', cotizaciones: 'gestionar', abonos: 'gestionar', facturas: 'ver', plantillas: 'ninguno', documentos: 'gestionar', auditoria: 'ninguno', usuarios: 'ninguno', config: 'ninguno' } },
+    { id: 'rol_contable', nombre: 'Contabilidad', descripcion: 'Facturación, cobros y auditoría. Solo lectura de clientes y presupuestos.', sistema: false, permisos: { dashboard: 'ver', busqueda: 'ver', clientes: 'ver', inventario: 'ver', cotizaciones: 'ver', abonos: 'gestionar', facturas: 'gestionar', plantillas: 'ninguno', documentos: 'ver', auditoria: 'ver', usuarios: 'ninguno', config: 'ninguno' } },
+  ];
+}
+function defaultUsuarios() {
+  return [
+    { id: 'admin', codigo: 'USR-0001', nombre: 'Administrador', email: 'admin@zewareformas.es', rolId: 'rol_admin', activo: true, passHash: '', creado: new Date().toISOString(), creadoPor: 'Sistema' },
+    { id: 'comercial', codigo: 'USR-0002', nombre: 'Laura Gómez', email: 'laura@zewareformas.es', rolId: 'rol_comercial', activo: true, passHash: '', creado: new Date().toISOString(), creadoPor: 'Sistema' },
+    { id: 'contable', codigo: 'USR-0003', nombre: 'Carlos Ruiz', email: 'carlos@zewareformas.es', rolId: 'rol_contable', activo: true, passHash: '', creado: new Date().toISOString(), creadoPor: 'Sistema' },
+  ];
+}
+/* ---------- contraseñas ----------
+   Aviso: esta app guarda todo en localStorage del navegador, sin servidor.
+   El hash evita que alguien vea la contraseña a simple vista, pero no es una
+   autenticación real: quien tenga acceso a ese navegador puede editar o
+   borrar localStorage directamente. Sirve para evitar cambios accidentales
+   de sesión entre compañeros, no para proteger datos sensibles. */
+async function hashPassword(pass, salt) {
+  const text = `${salt}::${pass || ''}`;
+  if (window.crypto?.subtle) {
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+    return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+  }
+  let h = 0; for (let i = 0; i < text.length; i++) h = (h * 31 + text.charCodeAt(i)) >>> 0;
+  return 'f' + h.toString(16);
+}
+async function setPassword(u, pass) { u.passHash = pass ? await hashPassword(pass, u.id) : ''; }
+async function checkPassword(u, pass) { return !u.passHash || (await hashPassword(pass || '', u.id)) === u.passHash; }
 
 const ESTADOS_COT = ['Borrador', 'Enviado', 'Aprobado', 'Facturado', 'Vencido', 'Anulado'];
 const FORMAS_PAGO = ['Transferencia', 'Bizum', 'Tarjeta', 'Domiciliación', 'Efectivo'];
@@ -59,6 +106,12 @@ const Store = {
     try { DB = JSON.parse(localStorage.getItem(DB_KEY)); } catch (e) { DB = null; }
     if (!DB || !DB.version) { DB = seed(); this.save(); }
     DB.empresa = { moneda: 'EUR', ivaDefault: 21, pais: 'España', codigoPostal: '', provincia: '', ...DB.empresa };
+    DB.inventario = DB.inventario || [];
+    DB.roles = DB.roles && DB.roles.length ? DB.roles : defaultRoles();
+    DB.usuarios = DB.usuarios && DB.usuarios.length ? DB.usuarios : defaultUsuarios();
+    DB.usuarios.forEach((u) => { if (u.passHash === undefined) u.passHash = ''; });
+    DB.seq = { COT: 0, FAC: 0, ABO: 0, CLI: 0, INV: 0, USR: DB.usuarios.length, ...DB.seq };
+    if (!DB.usuarioActual || !DB.usuarios.find((u) => u.id === DB.usuarioActual)) DB.usuarioActual = DB.usuarios[0]?.id;
     migrarLexicoES(DB); this.save();
     return DB;
   },
@@ -67,12 +120,12 @@ const Store = {
     catch (e) { console.error(e); if (window.toast) toast('Almacenamiento lleno: libera documentos adjuntos.', 'bad'); return false; }
   },
   reset() { localStorage.removeItem(DB_KEY); DB = seed(); this.save(); },
-  user() { return USERS.find((u) => u.id === DB.usuarioActual) || USERS[0]; },
+  user() { return DB.usuarios.find((u) => u.id === DB.usuarioActual) || DB.usuarios[0]; },
   nextNumber(tipo) {
     const year = new Date().getFullYear();
-    const pref = { COT: 'PRE', FAC: 'FAC', ABO: 'REC', CLI: 'CLI' }[tipo];
+    const pref = { COT: 'PRE', FAC: 'FAC', ABO: 'REC', CLI: 'CLI', INV: 'INV', USR: 'USR' }[tipo];
     DB.seq[tipo] = (DB.seq[tipo] || 0) + 1;
-    return tipo === 'CLI' ? `${pref}-${String(DB.seq[tipo]).padStart(4, '0')}` : `${pref}-${year}-${String(DB.seq[tipo]).padStart(4, '0')}`;
+    return ['CLI', 'INV', 'USR'].includes(tipo) ? `${pref}-${String(DB.seq[tipo]).padStart(4, '0')}` : `${pref}-${year}-${String(DB.seq[tipo]).padStart(4, '0')}`;
   },
 };
 
@@ -91,6 +144,22 @@ function migrarLexicoES(db) {
   db.lexico = 'es-ES';
 }
 
+/* ---------- permisos ---------- */
+const getRol = (id) => DB.roles.find((r) => r.id === id);
+const rolDe = (u) => getRol(u?.rolId) || DB.roles[0];
+const permisoModulo = (modulo, u = Store.user()) => rolDe(u)?.permisos?.[modulo] || 'ninguno';
+const puedeVer = (modulo, u) => permisoModulo(modulo, u) !== 'ninguno';
+const puedeGestionar = (modulo, u) => permisoModulo(modulo, u) === 'gestionar';
+/* Simula si, tras aplicar nuevosPermisos al rol rolId, seguiría habiendo algún usuario activo
+   capaz de gestionar usuarios y roles (evita que el administrador se quede sin acceso). */
+function tendriaAccesoAdmin(rolId, nuevosPermisos) {
+  return DB.usuarios.some((u) => {
+    if (u.activo === false) return false;
+    const permisos = u.rolId === rolId ? nuevosPermisos : rolDe(u)?.permisos;
+    return permisos?.usuarios === 'gestionar';
+  });
+}
+
 /* ---------- auditoría ---------- */
 function diffObjects(a, b, ignore = ['items', 'firma', 'actualizado', 'versiones']) {
   const out = [];
@@ -106,7 +175,7 @@ function diffObjects(a, b, ignore = ['items', 'firma', 'actualizado', 'versiones
 }
 function audit(accion, entidad, ref, detalle = '', cambios = []) {
   const u = Store.user();
-  DB.auditoria.unshift({ id: uid('au'), fecha: new Date().toISOString(), usuario: u.nombre, rol: u.rol, accion, entidad, ref, detalle, cambios });
+  DB.auditoria.unshift({ id: uid('au'), fecha: new Date().toISOString(), usuario: u?.nombre || 'Sistema', rol: rolDe(u)?.nombre || '', accion, entidad, ref, detalle, cambios });
   if (DB.auditoria.length > 2000) DB.auditoria.length = 2000;
 }
 
@@ -129,6 +198,8 @@ const getCliente = (id) => DB.clientes.find((c) => c.id === id);
 const getCot = (id) => DB.cotizaciones.find((c) => c.id === id);
 const getFac = (id) => DB.facturas.find((c) => c.id === id);
 const getAbo = (id) => DB.abonos.find((c) => c.id === id);
+const getInvItem = (id) => DB.inventario.find((i) => i.id === id);
+const invMargen = (i) => (+i.precioVenta > 0 ? ((+i.precioVenta - (+i.costo || 0)) / +i.precioVenta) * 100 : 0);
 const abonosDe = (tipo, id) => DB.abonos.filter((a) => a.estado !== 'Anulado' && (tipo === 'cot' ? a.cotizacionId === id : a.facturaId === id));
 const sumAbonos = (list) => list.reduce((s, a) => s + (+a.valor || 0), 0);
 
@@ -193,9 +264,10 @@ function seed() {
   const now = new Date();
   const iso = (dOff) => { const d = new Date(now); d.setDate(d.getDate() + dOff); return d.toISOString().slice(0, 10); };
   const db = {
-    version: 1, lexico: 'es-ES', usuarioActual: 'admin', seq: { COT: 0, FAC: 0, ABO: 0, CLI: 0 },
+    version: 1, lexico: 'es-ES', usuarioActual: 'admin', seq: { COT: 0, FAC: 0, ABO: 0, CLI: 0, INV: 0, USR: 3 },
     empresa: { razonSocial: 'ZEWÁ REFORMAS', nit: 'B00000000', direccion: 'Calle Ejemplo, 1', ciudad: 'Madrid', codigoPostal: '28001', provincia: 'Madrid', pais: 'España', moneda: 'EUR', ivaDefault: 21, telefono: '641 486 231', email: 'zewareformas@gmail.com', banco: 'CaixaBank', titular: 'ZEWÁ REFORMAS', cuenta: 'ES00 0000 0000 0000 0000 0000' },
-    clientes: [], cotizaciones: [], abonos: [], facturas: [], plantillas: [], documentos: [], auditoria: [],
+    clientes: [], cotizaciones: [], abonos: [], facturas: [], plantillas: [], documentos: [], auditoria: [], inventario: [],
+    roles: defaultRoles(), usuarios: defaultUsuarios(),
   };
   DB = db;
   const mkCli = (o) => { const c = { id: uid('cli'), codigo: Store.nextNumber('CLI'), pais: 'España', creado: new Date(now - 200 * 864e5).toISOString(), creadoPor: 'Administrador', adjuntos: [], ...o }; db.clientes.push(c); return c; };
@@ -222,6 +294,17 @@ function seed() {
     pintura: { concepto: 'Pintura de paredes y techos (m²)', descripcion: 'Pintura plástica lisa, dos manos', cantidad: 120, valor: 9, iva: 21, desc: 0 },
     cocina: { concepto: 'Montaje de cocina', descripcion: 'Muebles, encimera y electrodomésticos (mano de obra)', cantidad: 1, valor: 2400, iva: 21, desc: 5 },
   };
+  const mkInv = (o) => { const i = { id: uid('inv'), codigo: Store.nextNumber('INV'), estado: 'Activo', iva: db.empresa.ivaDefault ?? 21, creado: new Date(now - 150 * 864e5).toISOString(), creadoPor: 'Administrador', ...o }; db.inventario.push(i); return i; };
+  mkInv({ tipo: 'Servicio', categoria: 'Demolición', unidad: 'ud', nombre: 'Demolición y retirada de escombros', descripcion: 'Incluye contenedor y gestión de residuos', costo: 450, precioVenta: 850 });
+  mkInv({ tipo: 'Servicio', categoria: 'Alicatado', unidad: 'm²', nombre: 'Alicatado', descripcion: 'Azulejo cerámico, material y mano de obra', costo: 22, precioVenta: 38 });
+  mkInv({ tipo: 'Servicio', categoria: 'Fontanería', unidad: 'ud', nombre: 'Instalación de fontanería', descripcion: 'Tomas de agua, desagües y sanitarios', costo: 650, precioVenta: 1200 });
+  mkInv({ tipo: 'Servicio', categoria: 'Electricidad', unidad: 'ud', nombre: 'Instalación eléctrica', descripcion: 'Cableado, mecanismos y boletín', costo: 900, precioVenta: 1600 });
+  mkInv({ tipo: 'Servicio', categoria: 'Pintura', unidad: 'm²', nombre: 'Pintura de paredes y techos', descripcion: 'Pintura plástica lisa, dos manos', costo: 4.5, precioVenta: 9 });
+  mkInv({ tipo: 'Servicio', categoria: 'Cocina', unidad: 'ud', nombre: 'Montaje de cocina', descripcion: 'Muebles, encimera y electrodomésticos (mano de obra)', costo: 1500, precioVenta: 2400 });
+  mkInv({ tipo: 'Material', categoria: 'Alicatado', unidad: 'm²', nombre: 'Azulejo cerámico 30x60', descripcion: 'Material cerámico de primera calidad', costo: 9, precioVenta: 16 });
+  mkInv({ tipo: 'Material', categoria: 'Pintura', unidad: 'l', nombre: 'Pintura plástica blanca', descripcion: 'Litro de pintura plástica lisa mate', costo: 4, precioVenta: 7.5 });
+  mkInv({ tipo: 'Material', categoria: 'Fontanería', unidad: 'ud', nombre: 'Sanitario completo (inodoro + cisterna)', descripcion: 'Inodoro de porcelana con cisterna', costo: 85, precioVenta: 150 });
+  mkInv({ tipo: 'Material', categoria: 'Electricidad', unidad: 'ud', nombre: 'Cuadro eléctrico 12 módulos', descripcion: 'Cuadro de protección con magnetotérmicos', costo: 60, precioVenta: 110 });
   const tplCot = plantillaActiva('cotizacion'), tplFac = plantillaActiva('factura'), tplAbo = plantillaActiva('abono');
   const mkCot = (cli, off, proyecto, items, estado, extra = {}) => {
     const c = { id: uid('cot'), numero: Store.nextNumber('COT'), fecha: iso(off), vence: iso(off + 30), proyecto, descripcion: `Presupuesto para ${proyecto.toLowerCase()}.`, clienteId: cli.id, items: items.map(clone), validez: '30 días', formaPago: '50% a la aceptación, 50% a la finalización', tiempoEjecucion: '4 semanas', observaciones: 'Precios en euros. Incluye retirada de escombros y limpieza final de obra.', responsable: 'Laura Gómez', estado, plantilla: tplCot, firma: '', facturaId: null, creado: new Date(now.getTime() + off * 864e5).toISOString(), creadoPor: 'Laura Gómez', ...extra };
