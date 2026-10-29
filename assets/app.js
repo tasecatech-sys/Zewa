@@ -1617,7 +1617,14 @@ function Config() {
     ${puede ? `<div class="card card-pad mt"><h3 style="font-size:15px;margin-bottom:6px">Respaldo de datos</h3><p class="hint" style="margin-top:0">Esta versión guarda la información en el navegador. Descarga un respaldo periódicamente o conéctala a Supabase para trabajo multiusuario (ver <code>supabase_facturacion.sql</code>).</p>
     <div class="btn-row"><button class="btn" id="exp">${ico('download')}Exportar respaldo (.json)</button><label class="btn">${ico('upload')}Importar respaldo<input type="file" accept=".json" id="imp" hidden></label><button class="btn danger" id="rst">${ico('trash')}Restaurar datos de ejemplo</button></div></div>` : ''}`;
   if (!puede) return;
-  $('#frm').addEventListener('submit', (e) => { e.preventDefault(); const before = clone(E); Object.assign(E, formValues(e.target)); audit('Editar', 'Configuración', 'Empresa', 'Datos del emisor', diffObjects(before, E)); persist(); toast('Configuración guardada'); });
+  $('#frm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const before = clone(E);
+    Object.assign(E, formValues(e.target));
+    if (!persist()) { Object.assign(E, before); return; }
+    audit('Editar', 'Configuración', 'Empresa', 'Datos del emisor', diffObjects(before, E));
+    toast('Configuración guardada');
+  });
   $('#exp').addEventListener('click', () => { downloadFile(`zewa-facturacion-respaldo-${todayISO()}.json`, JSON.stringify(DB, null, 2), 'application/json'); audit('Descargar', 'Configuración', 'Respaldo', 'Exportación completa'); persist(); });
   $('#imp').addEventListener('change', async (e) => {
     const f = e.target.files[0]; if (!f) return;
