@@ -1,4 +1,4 @@
-# TASECA · Sistema de Presupuestos y Facturación
+# ZEWÁ · Sistema de Presupuestos y Facturación
 
 Plataforma web para gestionar todo el ciclo comercial:
 **Cliente → Presupuesto → Cobro → Factura → Pago final**, con control documental, financiero y de auditoría.
@@ -65,4 +65,4 @@ Los nombres internos del código, las rutas (`#/cotizaciones`, `#/abonos`), las 
 - RLS por empresa en todas las tablas;
 - Storage: bucket privado `fac-documentos`, organizado como `{empresa}/{cliente}/{proyecto}/...`.
 
-El siguiente paso es cambiar `Store` en `assets/data.js` por llamadas a `supabase-js`, igual que en `admin-taseca.html`.
+El siguiente paso es cambiar `Store` en `assets/data.js` por llamadas a `supabase-js`.

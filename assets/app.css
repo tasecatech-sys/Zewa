@@ -1,5 +1,5 @@
 /* ==========================================================
-   TASECA · Sistema de Cotización y Facturación
+   ZEWÁ · Sistema de Presupuestos y Facturación
    Paleta: azul corporativo · blanco · gris claro (+ modo oscuro)
    ========================================================== */
 :root {
@@ -77,6 +77,7 @@ svg.i { width: 18px; height: 18px; flex: none; stroke: currentColor; fill: none;
 
 /* ---------- Pantalla de inicio de sesión ---------- */
 .login-screen { min-height: 100vh; display: grid; place-items: center; padding: 24px; background: radial-gradient(circle at 20% 15%, var(--brand-50), var(--bg) 55%); }
+.login-screen[hidden] { display: none; }
 .login-card { width: min(380px, 100%); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-lg); padding: 32px 28px; animation: pop .2s ease-out; }
 .login-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 22px; }
 .login-brand .brand-mark { width: 40px; height: 40px; border-radius: 10px; background: linear-gradient(135deg, #3b82f6, #1d4ed8); display: grid; place-items: center; font-weight: 800; color: #fff; font-size: 17px; }

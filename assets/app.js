@@ -1,5 +1,5 @@
 /* ==========================================================
-   TASECA · Sistema de Presupuestos y Facturación — aplicación
+   ZEWÁ · Sistema de Presupuestos y Facturación — aplicación
    Ciclo: Cliente → Presupuesto → Cobro → Factura → Pago final
    ========================================================== */
 Store.load();
@@ -921,7 +921,7 @@ function renderDoc(tipo, d, cfgOverride) {
     notas: () => d.observaciones ? `<div class="d-block"><h4>Observaciones</h4><div class="d-note">${esc(d.observaciones)}</div></div>` : '',
     firma: () => `<div class="d-sign"><div>${firma('emisor') ? `<img src="${firma('emisor').img}" alt="Firma">` : '<div style="height:64px"></div>'}<div class="line"><b>${esc(firma('emisor')?.nombre || cfg.firmaNombre)}</b><br><small>${esc(cfg.firmaCargo)} · ${esc(E.razonSocial)}</small>${firma('emisor') ? `<br><small style="color:#15803d">Firmado digitalmente ${fmtDateTime(firma('emisor').fecha)}</small>` : ''}</div></div>
       <div>${firma('cliente') ? `<img src="${firma('cliente').img}" alt="Firma cliente">` : '<div style="height:64px"></div>'}<div class="line"><b>${esc(firma('cliente')?.nombre || cli.contacto || 'Cliente')}</b><br><small>${tipo === 'cotizacion' ? 'Aceptación del cliente' : esc(cli.razonSocial || '')}</small>${firma('cliente') ? `<br><small style="color:#15803d">Firmado digitalmente ${fmtDateTime(firma('cliente').fecha)}</small>` : ''}</div></div></div>`,
-    pie: () => `<div class="d-foot">${esc(cfg.pie)}${d.plantilla ? `<br>Plantilla v${d.plantilla.version} · Generado por TASECA` : ''}</div>`,
+    pie: () => `<div class="d-foot">${esc(cfg.pie)}${d.plantilla ? `<br>Plantilla v${d.plantilla.version} · Generado por ZEWÁ` : ''}</div>`,
   };
   if (cfg.html && cfg.html.trim()) {
     const vars = { numero: d.numero, fecha: fmtDate(d.fecha), vence: fmtDate(d.vence), titulo, proyecto: d.proyecto || cotRel?.proyecto || '', cliente: cli.razonSocial, nit: cli.nit, direccion: cli.direccion, ciudad: cli.ciudad, telefono: cli.celular || cli.telefono, correo: cli.email, subtotal: fmtMoney(t.subtotal), descuento: fmtMoney(t.descuento), base: fmtMoney(t.base), iva: fmtMoney(t.iva), total: fmtMoney(tipo === 'abono' ? d.valor : t.total), saldo: fmtMoney(fr?.saldo ?? pr?.saldo ?? 0), observaciones: d.observaciones || '', empresa: E.razonSocial, empresa_nit: E.nit, logo: cfg.logo ? `<img src="${cfg.logo}" style="max-height:60px">` : '' };
@@ -1618,7 +1618,7 @@ function Config() {
     <div class="btn-row"><button class="btn" id="exp">${ico('download')}Exportar respaldo (.json)</button><label class="btn">${ico('upload')}Importar respaldo<input type="file" accept=".json" id="imp" hidden></label><button class="btn danger" id="rst">${ico('trash')}Restaurar datos de ejemplo</button></div></div>` : ''}`;
   if (!puede) return;
   $('#frm').addEventListener('submit', (e) => { e.preventDefault(); const before = clone(E); Object.assign(E, formValues(e.target)); audit('Editar', 'Configuración', 'Empresa', 'Datos del emisor', diffObjects(before, E)); persist(); toast('Configuración guardada'); });
-  $('#exp').addEventListener('click', () => { downloadFile(`taseca-facturacion-respaldo-${todayISO()}.json`, JSON.stringify(DB, null, 2), 'application/json'); audit('Descargar', 'Configuración', 'Respaldo', 'Exportación completa'); persist(); });
+  $('#exp').addEventListener('click', () => { downloadFile(`zewa-facturacion-respaldo-${todayISO()}.json`, JSON.stringify(DB, null, 2), 'application/json'); audit('Descargar', 'Configuración', 'Respaldo', 'Exportación completa'); persist(); });
   $('#imp').addEventListener('change', async (e) => {
     const f = e.target.files[0]; if (!f) return;
     try { const data = JSON.parse(await readFileAsText(f)); if (!data.version || !Array.isArray(data.clientes)) throw 0; if (!(await confirmBox('Importar respaldo', 'Se reemplazarán todos los datos actuales por los del archivo.', 'Importar'))) return; DB = data; audit('Restaurar', 'Configuración', 'Respaldo', f.name); persist(); toast('Respaldo importado'); route(); }
