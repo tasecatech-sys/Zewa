@@ -23,10 +23,9 @@ function modal({ title, body, size = '', okText = 'Guardar', cancelText = 'Cance
   ov.className = 'overlay';
   ov.innerHTML = `<div class="modal ${size}" role="dialog" aria-modal="true"><header><h3>${esc(title)}</h3><button class="btn icon ghost" data-x aria-label="Cerrar">${ico('x')}</button></header>
     <div class="body">${body}</div><footer><button class="btn" data-x>${cancelText}</button>${hideOk ? '' : `<button class="btn primary" data-ok>${okText}</button>`}</footer></div>`;
-  const close = () => { ov.remove(); document.removeEventListener('keydown', onKey); };
-  const onKey = (e) => { if (e.key === 'Escape') close(); };
-  ov.addEventListener('click', (e) => { if (e.target === ov || e.target.closest('[data-x]')) close(); });
-  document.addEventListener('keydown', onKey);
+  // Solo se cierra con la X (o Cancelar): un clic fuera o la tecla Esc no deben perder lo escrito
+  const close = () => ov.remove();
+  ov.addEventListener('click', (e) => { if (e.target.closest('[data-x]')) close(); });
   document.body.appendChild(ov);
   ov.querySelector('[data-ok]')?.addEventListener('click', async () => { if (!onOk || (await onOk(ov)) !== false) close(); });
   onOpen?.(ov);
