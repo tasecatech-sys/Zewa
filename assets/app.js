@@ -2,7 +2,6 @@
    ZEWÁ · Sistema de Presupuestos y Facturación — aplicación
    Ciclo: Cliente → Presupuesto → Cobro → Factura → Pago final
    ========================================================== */
-Store.load();
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const ico = (n, cls = 'i') => `<svg class="${cls}"><use href="#i-${n}"/></svg>`;
@@ -154,6 +153,7 @@ function accessDenied(modLabel) {
     href ? `<a class="btn primary" href="${href}">${ico('arrow')}Ir a un módulo disponible</a>` : '');
 }
 function route() {
+  if (!Nube.ready) return;
   const { parts, query } = parseHash();
   const [mod, a, b] = parts;
   view.onclick = null;
@@ -899,9 +899,11 @@ function renderDoc(tipo, d, cfgOverride) {
   const estado = tipo === 'factura' ? (d.id ? facturaEstado(d) : '') : tipo === 'cotizacion' ? cotEstado(d) : d.estado;
   const stampColor = { Pagada: '#15803d', Anulada: '#b91c1c', Anulado: '#b91c1c', Vencida: '#b45309', Aprobada: '#15803d' }[estado];
   const firma = (k) => d.firmas?.[k];
+  const docCls = cfg.estilo === 'zewa' ? 'zewa' : '';
   const lines = (s) => esc(s).split('\n').map((x, i) => (i ? `<small>${x}</small>` : `<b>${x}</b>`)).join('');
   const B = {
-    encabezado: () => `<div class="d-head"><div class="d-logo">${cfg.logo ? `<img src="${cfg.logo}" alt="Logo">` : `<div class="lm">${esc((E.razonSocial || 'T')[0])}</div>`}<div class="d-emisor">${lines(cfg.encabezado || E.razonSocial)}</div></div>
+    encabezado: () => (cfg.estilo === 'zewa' ? `<div class="z-membrete"><img src="${cfg.logo || ZEWA_LOGO}" alt="${esc(E.razonSocial || 'ZEWÁ Reformas')}">${cfg.contacto ?? E.email ? `<div class="z-contacto"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="1.5"/><path d="m2.5 6 9.5 7 9.5-7" fill="none"/></svg><span>|</span>${esc(cfg.contacto ?? E.email)}</div>` : ''}</div>` : '') +
+      `<div class="d-head"><div class="d-logo">${cfg.logo ? `<img src="${cfg.logo}" alt="Logo">` : `<div class="lm">${esc((E.razonSocial || 'T')[0])}</div>`}<div class="d-emisor">${lines(cfg.encabezado || E.razonSocial)}</div></div>
       <div class="d-title"><h2>${titulo}</h2><div class="n">${esc(d.numero || '')}</div><small>Fecha: ${fmtDate(d.fecha)}</small>${d.vence && tipo !== 'abono' ? `<small>${tipo === 'cotizacion' ? 'Válido hasta' : 'Vence'}: ${fmtDate(d.vence)}</small>` : ''}${stampColor ? `<div class="stamp" style="color:${stampColor}">${estado}</div>` : ''}</div></div>`,
     cliente: () => `<div class="d-block"><h4>${tipo === 'abono' ? 'Recibimos de' : 'Cliente'}</h4><div class="d-cols">${[['Razón social', cli.razonSocial], ['NIF', cli.nit], ['Dirección', cli.direccion], ['Localidad', [[cli.codigoPostal, cli.ciudad].filter(Boolean).join(' '), cli.departamento].filter(Boolean).join(', ')], ['Teléfono', cli.celular || cli.telefono], ['Correo', cli.email], ['Contacto', cli.contacto && `${cli.contacto}${cli.cargo ? ' · ' + cli.cargo : ''}`]].filter(([, v]) => v).map(([k, v]) => `<div><small>${k}:</small>${esc(v)}</div>`).join('')}</div></div>`,
     general: () => {
@@ -926,9 +928,9 @@ function renderDoc(tipo, d, cfgOverride) {
   if (cfg.html && cfg.html.trim()) {
     const vars = { numero: d.numero, fecha: fmtDate(d.fecha), vence: fmtDate(d.vence), titulo, proyecto: d.proyecto || cotRel?.proyecto || '', cliente: cli.razonSocial, nit: cli.nit, direccion: cli.direccion, ciudad: cli.ciudad, telefono: cli.celular || cli.telefono, correo: cli.email, subtotal: fmtMoney(t.subtotal), descuento: fmtMoney(t.descuento), base: fmtMoney(t.base), iva: fmtMoney(t.iva), total: fmtMoney(tipo === 'abono' ? d.valor : t.total), saldo: fmtMoney(fr?.saldo ?? pr?.saldo ?? 0), observaciones: d.observaciones || '', empresa: E.razonSocial, empresa_nit: E.nit, logo: cfg.logo ? `<img src="${cfg.logo}" style="max-height:60px">` : '' };
     const html = cfg.html.replace(/\{\{\s*(\w+)\s*\}\}/g, (m, k) => (k === 'detalle' ? B.detalle() : k === 'totales' ? B.totales() : k === 'firma' ? B.firma() : k === 'logo' ? vars.logo : esc(vars[k] ?? '')));
-    return `<div class="doc" style="--c1:${cfg.color};--c2:${cfg.color2};--doc-font:'${cfg.fuente}'">${sanitizeHTML(html)}</div>`;
+    return `<div class="doc ${docCls}" style="--c1:${cfg.color};--c2:${cfg.color2};--doc-font:'${cfg.fuente}'">${sanitizeHTML(html)}</div>`;
   }
-  return `<div class="doc" style="--c1:${cfg.color};--c2:${cfg.color2};--doc-font:'${cfg.fuente}'">${cfg.bloques.filter((b) => b.on && B[b.k]).map((b) => B[b.k]()).join('')}</div>`;
+  return `<div class="doc ${docCls}" style="--c1:${cfg.color};--c2:${cfg.color2};--doc-font:'${cfg.fuente}'">${cfg.bloques.filter((b) => b.on && B[b.k]).map((b) => B[b.k]()).join('')}</div>`;
 }
 /* Las plantillas HTML subidas no pueden ejecutar scripts */
 function sanitizeHTML(html) {
@@ -943,7 +945,7 @@ function sanitizeHTML(html) {
 function buildPrintHTML(title, bodyHTML, isWord) {
   const css = new URL('assets/app.css', location.href).href;
   return `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>${esc(title)}</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Montserrat:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="${css}">
     <style>
       @page { size: A4; margin: ${isWord ? '0' : '16mm 14mm'}; }
@@ -1090,7 +1092,7 @@ function PlantillaEditor(id, query = {}) {
         ${cfg.docx ? `<div style="display:flex;gap:10px;align-items:center"><span class="file-ico" style="background:#2b579a">DOCX</span><div style="flex:1;min-width:0"><b style="word-break:break-all">${esc(cfg.docxNombre || 'plantilla.docx')}</b><div class="hint">${Math.round(cfg.docx.length * 0.75 / 1024)} KB · ${usaWord() ? 'en uso' : 'guardada, pero el documento usa el diseñador'}</div></div></div>
           <div class="btn-row mt"><button class="btn sm" id="wDown">${ico('download')}Descargar para editar</button><label class="btn sm primary">${ico('upload')}Subir versión editada<input type="file" accept=".docx" id="wIn" hidden data-edit></label><button class="btn sm ghost danger" id="wDel" data-edit>Quitar</button></div>`
         : `<div class="drop" id="wDrop" style="padding:18px">${ico('upload')}<div><b>Sube tu plantilla Word (.docx)</b></div><small>Arrastra el archivo aquí o haz clic · máx. 3 MB</small><input type="file" accept=".docx" id="wIn" hidden data-edit></div>
-          ${p.tipo === 'cotizacion' ? `<button class="btn sm mt" id="wEj" data-edit>${ico('layout')}Cargar ejemplo: Presupuesto Zewá Reformas</button>` : ''}`}
+          ${p.tipo === 'cotizacion' ? `<button class="btn sm mt" id="wEj" data-edit>${ico('layout')}Cargar plantilla Word con el membrete Zewá</button>` : ''}`}
       </div></div>
       <div class="f s12" id="wCheck">${wordCheck}</div>
       <div class="f s12"><details ${cfg.docx ? '' : 'open'}><summary style="cursor:pointer;font-weight:600">¿Cómo preparar la plantilla en Word?</summary>
@@ -1107,7 +1109,9 @@ function PlantillaEditor(id, query = {}) {
     dis: () => `<div class="form-grid">
       ${usaWord() ? `<div class="f s12"><div style="padding:10px 12px;border-radius:8px;background:var(--warn-bg);color:var(--warn)">Esta plantilla usa un archivo Word: el diseño se cambia editando el .docx. Estas opciones aplican solo al diseñador del sistema.</div></div>` : ''}
       <div class="f s12"><label>Colores corporativos</label><div class="swatches"><input type="color" data-k="color" value="${cfg.color}" title="Color principal"><input type="color" data-k="color2" value="${cfg.color2}" title="Color secundario"><span class="hint">Principal · Secundario</span></div></div>
-      <div class="f s12"><label>Tipografía</label><select class="in" data-k="fuente">${['Inter', 'Georgia', 'Arial', 'Courier New', 'Trebuchet MS'].map((f) => `<option ${f === cfg.fuente ? 'selected' : ''}>${f}</option>`).join('')}</select></div>
+      <div class="f s6"><label>Estilo del documento</label><select class="in" data-k="estilo">${[['zewa', 'Membrete Zewá'], ['', 'Clásico']].map(([v, l]) => `<option value="${v}" ${(cfg.estilo || '') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+      <div class="f s6"><label>Correo del membrete</label><input class="in" data-k="contacto" value="${esc(cfg.contacto ?? 'contacto@zewa.com')}"></div>
+      <div class="f s12"><label>Tipografía</label><select class="in" data-k="fuente">${['Montserrat', 'Inter', 'Georgia', 'Arial', 'Courier New', 'Trebuchet MS'].map((f) => `<option ${f === cfg.fuente ? 'selected' : ''}>${f}</option>`).join('')}</select></div>
       <div class="f s12"><label>Logo</label><div style="display:flex;gap:8px;align-items:center">${cfg.logo ? `<img src="${cfg.logo}" style="max-height:40px;max-width:120px;border:1px solid var(--border);border-radius:6px;padding:2px;background:#fff">` : ''}<label class="btn sm">${ico('upload')}Subir imagen<input type="file" accept="image/*" id="logoIn" hidden></label>${cfg.logo ? `<button class="btn sm ghost" id="logoDel">Quitar</button>` : ''}</div><span class="hint">PNG o SVG, máx. 300 KB</span></div>
       <div class="f s12"><label>Encabezado (datos del emisor)</label><textarea class="in" data-k="encabezado" rows="3">${esc(cfg.encabezado)}</textarea></div>
       <div class="f s12"><label>Pie de página</label><textarea class="in" data-k="pie" rows="2">${esc(cfg.pie)}</textarea></div>
@@ -1167,7 +1171,7 @@ function PlantillaEditor(id, query = {}) {
       drop.addEventListener('drop', (e) => { e.preventDefault(); drop.classList.remove('over'); pick(e.dataTransfer.files[0]); });
     }
     $('#wEj')?.addEventListener('click', async () => {
-      try { const r = await fetch('plantillas/cotizacion-zewa.docx'); if (!r.ok) throw 0; loadDocx(new Uint8Array(await r.arrayBuffer()), 'Plantilla_Presupuesto_Zewa.docx'); }
+      try { const r = await fetch('plantillas/presupuesto-membrete-zewa.docx'); if (!r.ok) throw 0; loadDocx(new Uint8Array(await r.arrayBuffer()), 'Presupuesto_Membrete_Zewa.docx'); }
       catch (e) { toast('No se pudo cargar el ejemplo. Abre el sistema desde el servidor local (http://localhost…).', 'bad'); }
     });
     $('#wDown')?.addEventListener('click', () => downloadFile(cfg.docxNombre || 'plantilla.docx', cfg.docx));
@@ -1321,19 +1325,27 @@ function bindDocRows(root) {
   });
 }
 async function addVersion(d, f) {
-  if (!f) return; if (f.size > 2 * 1024 * 1024) return toast('Máximo 2 MB por archivo en esta versión local', 'bad');
+  if (!f) return; if (f.size > 10 * 1024 * 1024) return toast('Máximo 10 MB por archivo', 'bad');
   const v = d.versiones.length + 1;
   d.versiones.push({ v, fecha: new Date().toISOString(), usuario: Store.user().nombre, size: f.size, data: await readFileAsDataURL(f) });
   audit('Subir', 'Documento', d.nombre, `Nueva versión v${v}`);
   if (persist()) { toast(`Versión v${v} guardada`); route(); } else d.versiones.pop();
 }
-function docViewer(d) {
+async function docViewer(d) {
+  // Los archivos viven en Storage: se piden enlaces temporales firmados para ver y descargar
+  const urls = new Map();
+  const faltan = d.versiones.filter((v) => !v.data && v.storagePath);
+  if (faltan.length) {
+    try { await Promise.all(faltan.map(async (v) => { urls.set(v, await Nube.urlArchivo(v.storagePath)); })); }
+    catch (e) { toast('No se pudo abrir el archivo: ' + e.message, 'bad'); }
+  }
+  const src = (v) => v.data || urls.get(v) || '';
   const last = d.versiones[d.versiones.length - 1];
   modal({
     title: d.nombre, size: 'lg', hideOk: true, cancelText: 'Cerrar',
-    body: `<div class="grid g-main"><div>${last.data ? (/image/.test(d.mime) ? `<img src="${last.data}" style="max-width:100%;border-radius:8px">` : /pdf/.test(d.mime) ? `<iframe src="${last.data}" style="width:100%;height:60vh;border:1px solid var(--border);border-radius:8px"></iframe>` : emptyState('Vista previa no disponible para este formato')) : emptyState('Documento de ejemplo sin archivo cargado. Sube una nueva versión para adjuntar el archivo real.')}</div>
+    body: `<div class="grid g-main"><div>${src(last) ? (/image/.test(d.mime) ? `<img src="${src(last)}" style="max-width:100%;border-radius:8px">` : /pdf/.test(d.mime) ? `<iframe src="${src(last)}" style="width:100%;height:60vh;border:1px solid var(--border);border-radius:8px"></iframe>` : emptyState('Vista previa no disponible para este formato')) : emptyState('Documento de ejemplo sin archivo cargado. Sube una nueva versión para adjuntar el archivo real.')}</div>
       <div><div class="kv" style="grid-template-columns:1fr">${[['Cliente', clienteNombre(d.clienteId)], ['Proyecto', d.proyecto || 'General'], ['Categoría', d.categoria], ['Etiquetas', (d.etiquetas || []).join(', ') || '—']].map(([k, v]) => `<div><small>${k}</small><span>${esc(v)}</span></div>`).join('')}</div>
-      <h4 class="mt" style="font-size:13px">Versiones</h4><ul class="timeline">${[...d.versiones].reverse().map((v) => `<li><span class="dot">${ico('clock')}</span><div><b>v${v.v}</b>${v.data ? ` · <a href="${v.data}" download="${esc(d.nombre)}">descargar</a>` : ''}<small>${esc(v.usuario)} · ${fmtDateTime(v.fecha)}${v.size ? ' · ' + Math.round(v.size / 1024) + ' KB' : ''}</small></div></li>`).join('')}</ul>
+      <h4 class="mt" style="font-size:13px">Versiones</h4><ul class="timeline">${[...d.versiones].reverse().map((v) => `<li><span class="dot">${ico('clock')}</span><div><b>v${v.v}</b>${src(v) ? ` · <a href="${src(v)}" target="_blank" rel="noopener" download="${esc(d.nombre)}">descargar</a>` : ''}<small>${esc(v.usuario)} · ${fmtDateTime(v.fecha)}${v.size ? ' · ' + Math.round(v.size / 1024) + ' KB' : ''}</small></div></li>`).join('')}</ul>
       <div class="f mt"><label>Editar etiquetas</label><input class="in" id="tagsIn" value="${esc((d.etiquetas || []).join(', '))}"></div><button class="btn sm mt" id="tagsSave">Guardar etiquetas</button>
       <button class="btn sm danger mt" id="docDel">${ico('trash')}Eliminar documento</button></div></div>`,
     onOpen: (ov) => {
@@ -1351,7 +1363,7 @@ function setupDrop(el, onFiles) {
   el.addEventListener('drop', (e) => { e.preventDefault(); el.classList.remove('over'); onFiles([...e.dataTransfer.files]); });
 }
 function uploadDialog(files, preset = {}, done) {
-  files = files.filter((f) => { if (f.size > 2 * 1024 * 1024) { toast(`${f.name}: supera 2 MB`, 'bad'); return false; } return true; });
+  files = files.filter((f) => { if (f.size > 10 * 1024 * 1024) { toast(`${f.name}: supera 10 MB`, 'bad'); return false; } return true; });
   if (!files.length) return;
   const projOf = (cid) => [...new Set(DB.cotizaciones.filter((c) => c.clienteId === cid).map((c) => c.proyecto))];
   modal({
@@ -1492,72 +1504,72 @@ function UsuarioForm(id) {
       <div class="section-title">Identificación</div>
       <div class="f s3"><label>Código</label><input class="in" value="${esc(u.codigo || '(se asigna al guardar)')}" readonly></div>
       <div class="f s5"><label>Nombre completo <span class="req">*</span></label><input class="in" name="nombre" value="${esc(u.nombre || '')}"></div>
-      <div class="f s4"><label>Correo electrónico</label><input class="in" name="email" type="email" value="${esc(u.email || '')}"></div>
+      <div class="f s4"><label>Correo electrónico (usuario de acceso) <span class="req">*</span></label><input class="in" name="email" type="email" autocomplete="off" value="${esc(u.email || '')}"></div>
       <div class="section-title">Acceso</div>
       <div class="f s6"><label>Rol <span class="req">*</span></label><select class="in" name="rolId">${DB.roles.map((r) => `<option value="${r.id}" ${r.id === u.rolId ? 'selected' : ''}>${esc(r.nombre)}</option>`).join('')}</select><span class="hint" id="rolHint">${esc(getRol(u.rolId)?.descripcion || '')}</span></div>
       <div class="f s3"><label>Estado</label><select class="in" name="activo"><option value="true" ${u.activo !== false ? 'selected' : ''}>Activo</option><option value="false" ${u.activo === false ? 'selected' : ''}>Inactivo</option></select></div>
       <div class="section-title">Seguridad</div>
-      ${id ? `<div class="f s6"><label>Contraseña</label><div style="display:flex;align-items:center;gap:10px;height:38px"><span class="badge ${u.passHash ? 'b-ok' : 'b-muted'}">${u.passHash ? 'Configurada' : 'Sin contraseña'}</span><button type="button" class="btn sm" id="chPass">${ico('shield')}${u.passHash ? 'Cambiar' : 'Establecer'} contraseña</button></div></div>`
-        : `<div class="f s12"><span class="hint">Podrás establecer una contraseña para este usuario después de guardarlo.</span></div>`}
+      ${id ? `<div class="f s6"><label>Contraseña</label><div style="display:flex;align-items:center;gap:10px;height:38px"><span class="badge ${u.authUserId ? 'b-ok' : 'b-muted'}">${u.authUserId ? 'Acceso activo' : 'Sin acceso'}</span>${u.authUserId ? `<button type="button" class="btn sm" id="chPass">${ico('shield')}Cambiar contraseña</button>` : ''}</div></div>`
+        : `<div class="f s4"><label>Contraseña inicial <span class="req">*</span></label><input class="in" name="password" type="password" autocomplete="new-password"></div>
+           <div class="f s4"><label>Repetir contraseña <span class="req">*</span></label><input class="in" name="password2" type="password" autocomplete="new-password"></div>
+           <div class="f s12"><span class="hint">Mínimo 8 caracteres. Comunícala al usuario por un canal seguro; podrá cambiarla desde su menú de usuario.</span></div>`}
     </div>
-    <div class="btn-row" style="justify-content:flex-end;margin-top:18px"><a class="btn" href="#/usuarios">Cancelar</a><button class="btn primary">${ico('check')}Guardar usuario</button></div></form>`;
+    <div class="btn-row" style="justify-content:flex-end;margin-top:18px"><a class="btn" href="#/usuarios">Cancelar</a><button class="btn primary" id="btnSave">${ico('check')}Guardar usuario</button></div></form>`;
   const form = $('#frm');
   form.rolId.addEventListener('change', () => { $('#rolHint').textContent = getRol(form.rolId.value)?.descripcion || ''; });
   $('#chPass')?.addEventListener('click', () => changePasswordDialog(u));
-  form.addEventListener('submit', (e) => {
+  form.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const nombre = form.nombre.value.trim();
+    const nombre = form.nombre.value.trim(), email = form.email.value.trim().toLowerCase();
     form.nombre.classList.toggle('invalid', !nombre);
+    form.email.classList.toggle('invalid', !/^\S+@\S+\.\S+$/.test(email));
     if (!nombre) return toast('El nombre es obligatorio.', 'bad');
-    const v = { nombre, email: form.email.value.trim(), rolId: form.rolId.value, activo: form.activo.value === 'true' };
-    if (id) {
-      const willManage = v.activo && getRol(v.rolId)?.permisos?.usuarios === 'gestionar';
-      if (u.id === DB.usuarioActual && !willManage && !DB.usuarios.some((x) => x.id !== u.id && x.activo !== false && permisoModulo('usuarios', x) === 'gestionar')) {
-        return toast('No puedes quitarte el acceso de gestión de usuarios: eres el único con este permiso.', 'bad');
+    if (!/^\S+@\S+\.\S+$/.test(email)) return toast('Indica un correo válido: es el usuario para iniciar sesión.', 'bad');
+    const v = { nombre, email, rolId: form.rolId.value, activo: form.activo.value === 'true' };
+    const btn = $('#btnSave'); btn.disabled = true;
+    try {
+      if (id) {
+        const willManage = v.activo && getRol(v.rolId)?.permisos?.usuarios === 'gestionar';
+        if (u.id === DB.usuarioActual && !willManage && !DB.usuarios.some((x) => x.id !== u.id && x.activo !== false && permisoModulo('usuarios', x) === 'gestionar')) {
+          return toast('No puedes quitarte el acceso de gestión de usuarios: eres el único con este permiso.', 'bad');
+        }
+        if (u.authUserId && email !== (u.email || '').toLowerCase()) await Nube.invocar('email', { usuarioId: u.id, email });
+        const before = clone(u); Object.assign(u, v, { actualizado: new Date().toISOString() });
+        audit('Editar', 'Usuario', u.codigo || u.nombre, u.nombre, diffObjects(before, u));
+      } else {
+        const p1 = form.password.value, p2 = form.password2.value;
+        if (p1.length < 8) return toast('La contraseña debe tener al menos 8 caracteres.', 'bad');
+        if (p1 !== p2) return toast('Las contraseñas no coinciden.', 'bad');
+        const { usuario } = await Nube.invocar('crear', { ...v, password: p1 });
+        const n = Nube.fromUsuarioRow(usuario);
+        DB.usuarios.push(n); Nube.marcarGuardado('usuarios', n);
+        audit('Crear', 'Usuario', n.codigo, n.nombre);
       }
-      const before = clone(u); Object.assign(u, v, { actualizado: new Date().toISOString() });
-      audit('Editar', 'Usuario', u.codigo || u.nombre, u.nombre, diffObjects(before, u));
-    } else {
-      const n = { id: uid('usr'), codigo: Store.nextNumber('USR'), ...v, passHash: '', creado: new Date().toISOString(), creadoPor: Store.user().nombre };
-      DB.usuarios.push(n); audit('Crear', 'Usuario', n.codigo, n.nombre);
-    }
-    persist(); toast('Usuario guardado'); go('/usuarios');
+      persist(); toast('Usuario guardado'); go('/usuarios');
+    } catch (err) { toast(err.message, 'bad'); }
+    finally { btn.disabled = false; }
   });
 }
-/* Diálogo para establecer, cambiar o quitar la contraseña de un usuario (solo quien gestiona el módulo Usuarios) */
+/* Cambiar la contraseña de acceso (la propia o, si gestionas usuarios, la de otro) */
 function changePasswordDialog(u) {
+  const propio = u.id === DB.usuarioActual;
   modal({
-    title: 'Contraseña · ' + u.nombre, okText: 'Guardar',
+    title: (propio ? 'Mi contraseña' : 'Contraseña · ' + u.nombre), okText: 'Guardar',
     body: `<div class="form-grid">
-      <div class="f s12"><label>Nueva contraseña</label><input class="in" type="password" id="np" autocomplete="new-password" placeholder="Déjalo en blanco para quitar la contraseña"></div>
+      <div class="f s12"><label>Nueva contraseña</label><input class="in" type="password" id="np" autocomplete="new-password"></div>
       <div class="f s12"><label>Confirmar contraseña</label><input class="in" type="password" id="np2" autocomplete="new-password"></div>
-      <div class="f s12"><span class="hint">Mínimo 4 caracteres. Se guarda solo como huella (hash) en este navegador; no es una autenticación de servidor, sirve para evitar cambios de sesión accidentales entre compañeros.</span></div>
+      <div class="f s12"><span class="hint">Mínimo 8 caracteres.${propio ? '' : ' El usuario deberá usar la nueva contraseña la próxima vez que inicie sesión.'}</span></div>
     </div>`,
     onOk: async (ov) => {
       const p1 = $('#np', ov).value, p2 = $('#np2', ov).value;
+      if (p1.length < 8) { toast('La contraseña debe tener al menos 8 caracteres.', 'bad'); return false; }
       if (p1 !== p2) { toast('Las contraseñas no coinciden.', 'bad'); return false; }
-      if (p1 && p1.length < 4) { toast('La contraseña debe tener al menos 4 caracteres.', 'bad'); return false; }
-      await setPassword(u, p1);
-      audit('Editar', 'Usuario', u.codigo || u.nombre, p1 ? 'Contraseña actualizada' : 'Contraseña eliminada');
-      persist(); toast(p1 ? 'Contraseña actualizada' : 'Contraseña eliminada'); route();
+      try {
+        if (propio) await Nube.nuevaPassword(p1); else await Nube.invocar('password', { usuarioId: u.id, password: p1 });
+      } catch (e) { toast(e.message, 'bad'); return false; }
+      audit('Editar', 'Usuario', u.codigo || u.nombre, 'Contraseña actualizada');
+      persist(); toast('Contraseña actualizada');
     },
-  });
-}
-/* Pide la contraseña de un usuario antes de activar su sesión; resuelve true/false */
-function askPassword(u) {
-  return new Promise((resolve) => {
-    let ok = false;
-    const m = modal({
-      title: `Contraseña de ${u.nombre}`, okText: 'Entrar',
-      body: `<div class="f s12"><label>Contraseña</label><input class="in" type="password" id="pwIn" autocomplete="current-password"></div><p class="hint" id="pwErr" style="color:var(--bad);margin-top:8px"></p>`,
-      onOk: async (ov) => {
-        const valido = await checkPassword(u, $('#pwIn', ov).value);
-        if (!valido) { $('#pwErr', ov).textContent = 'Contraseña incorrecta.'; return false; }
-        ok = true;
-      },
-    });
-    const obs = new MutationObserver(() => { if (!document.body.contains(m.el)) { obs.disconnect(); resolve(ok); } });
-    obs.observe(document.body, { childList: true });
   });
 }
 function RolForm(id) {
@@ -1614,8 +1626,11 @@ function Config() {
     ['sec', 'Moneda e impuestos'], ['moneda', 'Moneda', 's3', { options: Object.keys(MONEDAS) }], ['ivaDefault', 'IVA por defecto (%)', 's3', { type: 'number' }], ['sec', 'Datos bancarios por defecto'], ['banco', 'Banco', 's3'], ['titular', 'Titular', 's3'], ['cuenta', 'Cuenta (IBAN)', 's6']];
   view.innerHTML = pageHead('Configuración', 'Datos de la empresa emisora, respaldo y restauración' + (puede ? '' : ' · solo lectura para tu rol')) +
     `<form class="card card-pad" id="frm"><fieldset ${puede ? '' : 'disabled'} style="border:0;padding:0;margin:0"><div class="form-grid">${F.map((f) => fieldHTML(f, E[f[0]])).join('')}</div>${puede ? `<div class="btn-row" style="justify-content:flex-end;margin-top:16px"><button class="btn primary">Guardar</button></div>` : ''}</fieldset></form>
-    ${puede ? `<div class="card card-pad mt"><h3 style="font-size:15px;margin-bottom:6px">Respaldo de datos</h3><p class="hint" style="margin-top:0">Esta versión guarda la información en el navegador. Descarga un respaldo periódicamente o conéctala a Supabase para trabajo multiusuario (ver <code>supabase_facturacion.sql</code>).</p>
-    <div class="btn-row"><button class="btn" id="exp">${ico('download')}Exportar respaldo (.json)</button><label class="btn">${ico('upload')}Importar respaldo<input type="file" accept=".json" id="imp" hidden></label><button class="btn danger" id="rst">${ico('trash')}Restaurar datos de ejemplo</button></div></div>` : ''}`;
+    ${puede ? `<div class="card card-pad mt"><h3 style="font-size:15px;margin-bottom:6px">Respaldo de datos</h3><p class="hint" style="margin-top:0">Los datos se guardan en el servidor (Supabase) y los comparten todos los usuarios de la empresa. Puedes descargar una copia completa en JSON cuando quieras.</p>
+    <div class="btn-row"><button class="btn" id="exp">${ico('download')}Exportar respaldo (.json)</button><label class="btn">${ico('upload')}Importar respaldo<input type="file" accept=".json" id="imp" hidden></label>
+    ${localDataAnterior() ? `<button class="btn" id="mig">${ico('upload')}Pasar al servidor los datos de este navegador</button>` : ''}
+    ${!DB.clientes.length && !DB.cotizaciones.length ? `<button class="btn" id="demo">${ico('plus')}Cargar datos de ejemplo</button>` : ''}</div>
+    <p class="hint">Importar reemplaza clientes, inventario, plantillas, presupuestos, cobros, facturas y documentos por los del archivo. Los usuarios, roles y datos de la empresa no se tocan.</p></div>` : ''}`;
   if (!puede) return;
   $('#frm').addEventListener('submit', (e) => {
     e.preventDefault();
@@ -1623,15 +1638,68 @@ function Config() {
     Object.assign(E, formValues(e.target));
     if (!persist()) { Object.assign(E, before); return; }
     audit('Editar', 'Configuración', 'Empresa', 'Datos del emisor', diffObjects(before, E));
+    persist();
     toast('Configuración guardada');
   });
   $('#exp').addEventListener('click', () => { downloadFile(`zewa-facturacion-respaldo-${todayISO()}.json`, JSON.stringify(DB, null, 2), 'application/json'); audit('Descargar', 'Configuración', 'Respaldo', 'Exportación completa'); persist(); });
   $('#imp').addEventListener('change', async (e) => {
     const f = e.target.files[0]; if (!f) return;
-    try { const data = JSON.parse(await readFileAsText(f)); if (!data.version || !Array.isArray(data.clientes)) throw 0; if (!(await confirmBox('Importar respaldo', 'Se reemplazarán todos los datos actuales por los del archivo.', 'Importar'))) return; DB = data; audit('Restaurar', 'Configuración', 'Respaldo', f.name); persist(); toast('Respaldo importado'); route(); }
-    catch (err) { toast('Archivo de respaldo no válido', 'bad'); }
+    let data;
+    try { data = JSON.parse(await readFileAsText(f)); if (!data.version || !Array.isArray(data.clientes)) throw 0; }
+    catch (err) { return toast('Archivo de respaldo no válido', 'bad'); }
+    if (!(await confirmBox('Importar respaldo', 'Se reemplazarán los datos comerciales actuales del servidor por los del archivo. Los usuarios, roles y datos de la empresa se mantienen.', 'Importar'))) return;
+    importarDatos(data, f.name); toast('Respaldo importado'); route();
   });
-  $('#rst').addEventListener('click', async () => { if (await confirmBox('Restaurar datos de ejemplo', 'Se borrarán todos los datos actuales de este navegador. Exporta un respaldo antes si lo necesitas.', 'Restaurar')) { Store.reset(); toast('Datos de ejemplo restaurados'); route(); } });
+  $('#mig')?.addEventListener('click', async () => {
+    const data = localDataAnterior(); if (!data) return;
+    if (!(await confirmBox('Pasar datos al servidor', `Se copiarán al servidor los datos guardados en este navegador por la versión anterior (${data.clientes.length} clientes, ${data.cotizaciones?.length || 0} presupuestos, ${data.facturas?.length || 0} facturas) y <b>reemplazarán</b> los datos comerciales actuales del servidor.`, 'Pasar al servidor'))) return;
+    importarDatos(data, 'Datos del navegador'); toast('Datos enviados al servidor'); route();
+  });
+  $('#demo')?.addEventListener('click', async () => {
+    if (!(await confirmBox('Cargar datos de ejemplo', 'Se crearán clientes, inventario, presupuestos, cobros y facturas de ejemplo para probar el sistema.', 'Cargar'))) return;
+    const actual = DB; const ej = seed(); DB = actual;
+    importarDatos(ej, 'Datos de ejemplo'); toast('Datos de ejemplo cargados'); route();
+  });
+}
+/* Datos guardados por la versión anterior (solo navegador), si existen */
+function localDataAnterior() {
+  try { const d = JSON.parse(localStorage.getItem(DB_KEY)); return d && d.version && Array.isArray(d.clientes) ? d : null; } catch (e) { return null; }
+}
+/* Reemplaza los datos comerciales por los de un respaldo; usuarios, roles y empresa no cambian */
+function importarDatos(data, origen) {
+  migrarLexicoES(data);
+  ['clientes', 'inventario', 'plantillas', 'cotizaciones', 'facturas', 'abonos', 'documentos'].forEach((k) => { DB[k] = clone(data[k] || []); });
+  DB.plantillas = DB.plantillas.filter((p) => p.versiones?.length);
+  const ids = new Set(DB.auditoria.map((a) => a.id));
+  DB.auditoria.push(...(data.auditoria || []).filter((a) => a.id && !ids.has(a.id)));
+  DB.auditoria.sort((a, b) => b.fecha.localeCompare(a.fecha));
+  asegurarPlantillas();
+  Store.syncSeq();
+  audit('Restaurar', 'Configuración', 'Respaldo', origen);
+  persist();
+}
+/* Garantiza plantillas para los tres documentos y que el presupuesto use el estilo Zewá */
+function asegurarPlantillas() {
+  if (!puedeGestionar('plantillas')) return false;
+  let cambio = false;
+  const nombres = { cotizacion: 'Presupuesto Zewá', factura: 'Factura Zewá', abono: 'Recibo de pago Zewá' };
+  ['cotizacion', 'factura', 'abono'].forEach((t) => {
+    const propias = DB.plantillas.filter((p) => p.tipo === t);
+    const zewa = propias.find((p) => p.versiones.at(-1)?.config?.estilo === 'zewa');
+    if (zewa && (t !== 'cotizacion' || zewa.estado === 'Activa')) return;
+    if (propias.length && t !== 'cotizacion') return;
+    propias.forEach((p) => { if (p.estado === 'Activa') p.estado = 'Inactiva'; });
+    if (zewa) { zewa.estado = 'Activa'; cambio = true; return; }
+    const ahora = new Date().toISOString(), E = DB.empresa;
+    const config = defaultTemplateConfig(t);
+    const lin2 = [E.direccion, [E.codigoPostal, E.ciudad].filter(Boolean).join(' '), E.telefono].filter(Boolean).join(' · ');
+    if (E.razonSocial) config.encabezado = `${E.razonSocial}${E.nit ? ' · NIF ' + E.nit : ''}${lin2 ? '\n' + lin2 : ''}`;
+    config.firmaNombre = E.razonSocial || config.firmaNombre;
+    DB.plantillas.push({ id: uid('tpl'), tipo: t, nombre: nombres[t], estado: 'Activa', creado: ahora, creadoPor: Store.user().nombre, versiones: [{ version: 1, fecha: ahora, usuario: Store.user().nombre, nota: 'Diseño corporativo Zewá (Plantilla Zewa.docx)', config }] });
+    audit('Crear', 'Plantilla', nombres[t], 'Diseño corporativo Zewá');
+    cambio = true;
+  });
+  return cambio;
 }
 function notFound() { view.innerHTML = pageHead('No encontrado', 'El registro no existe o fue eliminado.', `<a class="btn" href="#/dashboard">Ir al panel</a>`); }
 /* true + redirige si el usuario actual no puede gestionar (crear/editar/eliminar) el módulo */
@@ -1644,17 +1712,19 @@ function denyGestionar(modulo, redirect) {
 
 /* ---------------- Arranque ---------------- */
 function initShell() {
-  const sel = $('#userSel');
-  const syncSel = () => { sel.innerHTML = DB.usuarios.filter((u) => u.activo !== false).map((u) => `<option value="${u.id}">${esc(u.nombre)} · ${esc(rolDe(u)?.nombre || '')}</option>`).join(''); };
-  syncSel();
-  const syncUser = () => { syncSel(); sel.value = DB.usuarioActual; $('#avatar').textContent = Store.user().nombre.split(' ').map((x) => x[0]).slice(0, 2).join(''); };
-  sel.addEventListener('change', async () => {
-    const target = DB.usuarios.find((u) => u.id === sel.value);
-    if (target?.passHash && !(await askPassword(target))) { sel.value = DB.usuarioActual; return; }
-    DB.usuarioActual = sel.value; persist(); setLoggedIn(sel.value); syncUser(); toast('Sesión: ' + Store.user().nombre); route();
-  });
+  const syncUser = () => {
+    const u = Store.user();
+    $('#avatar').textContent = u.nombre.split(' ').map((x) => x[0]).slice(0, 2).join('');
+    $('#userName').textContent = u.nombre;
+    $('#userRol').textContent = rolDe(u)?.nombre || '';
+  };
   syncUser();
-  $('#logoutBtn').addEventListener('click', () => { clearLoggedIn(); location.hash = ''; showLogin(); });
+  window.syncUser = syncUser;
+  $('#userChip').addEventListener('click', () => changePasswordDialog(Store.user()));
+  $('#logoutBtn').addEventListener('click', async () => {
+    if (Nube.pending() && !(await confirmBox('Cerrar sesión', 'Aún se están guardando cambios en el servidor. Si sales ahora podrían perderse.', 'Salir igualmente'))) return;
+    await Nube.salir(); location.hash = ''; showLogin();
+  });
   const setThemeIcon = () => { const dark = document.documentElement.dataset.theme === 'dark' || (!document.documentElement.dataset.theme && matchMedia('(prefers-color-scheme: dark)').matches); $('#themeBtn').innerHTML = ico(dark ? 'sun' : 'moon'); return dark; };
   $('#themeBtn').addEventListener('click', () => {
     const dark = setThemeIcon(); const next = dark ? 'light' : 'dark';
@@ -1672,59 +1742,120 @@ function initShell() {
   document.addEventListener('click', (e) => { if (!e.target.closest('.gsearch')) $('#gresults').classList.remove('open'); else if (e.target.closest('#gresults a')) { $('#gresults').classList.remove('open'); gs.value = ''; } });
   document.addEventListener('keydown', (e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); gs.focus(); } });
   document.addEventListener('click', (e) => { if (window.innerWidth <= 900 && !e.target.closest('.sidebar,#menuBtn')) $('#sidebar').classList.remove('open'); });
+  // Al volver a la pestaña, trae los cambios de otros usuarios (si no estás editando)
+  document.addEventListener('visibilitychange', async () => {
+    if (document.visibilityState !== 'visible' || !Nube.ready) return;
+    if (/\/(nuevo|nueva|editar)\b/.test(location.hash) || /\/plantillas\/./.test(location.hash) || $('.overlay')) return;
+    try { if (await Nube.refrescar()) { syncUser(); route(); } } catch (e) { console.warn(e); }
+  });
 }
 
-/* ---------------- Sesión (pantalla de inicio) ----------------
-   La sesión vive en sessionStorage: se mantiene mientras la pestaña esté abierta,
-   pero pide usuario y contraseña de nuevo si se cierra el navegador o se usa "Cerrar sesión". */
-const SESSION_KEY = 'tsf_session';
-const isLoggedIn = () => { try { return sessionStorage.getItem(SESSION_KEY) === DB.usuarioActual; } catch (e) { return false; } };
-const setLoggedIn = (uid) => { try { sessionStorage.setItem(SESSION_KEY, uid); } catch (e) {} };
-const clearLoggedIn = () => { try { sessionStorage.removeItem(SESSION_KEY); } catch (e) {} };
+/* ---------------- Sesión (Supabase Auth) ---------------- */
 let shellReady = false;
-function enterApp() {
-  $('#loginScreen').hidden = true;
-  $('#appShell').hidden = false;
-  if (!shellReady) { initShell(); shellReady = true; }
-  route();
-}
-function showLogin() {
+const marca = () => `<div class="login-brand"><img src="${ZEWA_LOGO}" alt="ZEWÁ Reformas" class="login-logo"><small>Presupuestos y Facturación</small></div>`;
+function pantalla(html) {
   $('#appShell').hidden = true;
   const ls = $('#loginScreen'); ls.hidden = false;
-  const activos = DB.usuarios.filter((u) => u.activo !== false);
-  ls.innerHTML = `<div class="login-card">
-    <div class="login-brand"><div class="brand-mark">Z</div><div><b>ZEWÁ</b><small>Presupuestos y Facturación</small></div></div>
-    <h1>Iniciar sesión</h1>
+  ls.innerHTML = `<div class="login-card">${marca()}${html}</div>`;
+  return ls;
+}
+async function enterApp() {
+  pantalla(`<p class="hint" style="text-align:center">Cargando datos…</p>`);
+  try { await Nube.cargar(); }
+  catch (e) {
+    const ls = pantalla(`<h1>No se pudo entrar</h1><p class="hint" style="color:var(--bad)">${esc(e.message)}</p><button class="btn" id="retry">Volver a intentar</button> <button class="btn ghost" id="out">Cerrar sesión</button>`);
+    $('#retry', ls).onclick = enterApp; $('#out', ls).onclick = async () => { await Nube.salir(); showLogin(); };
+    return;
+  }
+  if (asegurarPlantillas()) persist();
+  $('#loginScreen').hidden = true;
+  $('#appShell').hidden = false;
+  if (!shellReady) { initShell(); shellReady = true; } else window.syncUser?.();
+  route();
+}
+function showLogin(msg = '') {
+  const ls = pantalla(`<h1>Iniciar sesión</h1>
     <form id="loginForm" novalidate>
-      <div class="f s12"><label>Usuario</label><select class="in" id="loginUser">${activos.map((u) => `<option value="${u.id}">${esc(u.nombre)} · ${esc(rolDe(u)?.nombre || '')}</option>`).join('')}</select></div>
-      <div class="f s12" id="loginPassWrap"><label>Contraseña</label><input class="in" type="password" id="loginPass" autocomplete="current-password">
+      <div class="f s12"><label>Correo electrónico</label><input class="in" type="email" id="loginEmail" autocomplete="username"></div>
+      <div class="f s12"><label>Contraseña</label><input class="in" type="password" id="loginPass" autocomplete="current-password">
         <div style="text-align:right;margin-top:6px"><a href="#" id="forgotLink" style="font-size:12.5px">¿Olvidaste tu contraseña?</a></div></div>
-      <p class="hint" id="loginErr" style="color:var(--bad);min-height:16px"></p>
+      <p class="hint" id="loginErr" style="color:var(--bad);min-height:16px">${esc(msg)}</p>
       <button class="btn primary" style="width:100%;justify-content:center" type="submit">${ico('arrow')}Entrar</button>
-    </form>
-  </div>`;
-  if (!activos.length) { ls.innerHTML = `<div class="login-card"><div class="login-brand"><div class="brand-mark">Z</div><div><b>ZEWÁ</b><small>Presupuestos y Facturación</small></div></div><p class="hint">No hay usuarios activos. Restaura un respaldo o los datos de ejemplo para continuar.</p></div>`; return; }
-  const userSel = $('#loginUser', ls), passWrap = $('#loginPassWrap', ls), passIn = $('#loginPass', ls), err = $('#loginErr', ls);
-  const syncPassField = () => { const u = activos.find((x) => x.id === userSel.value); passWrap.style.display = u?.passHash ? '' : 'none'; };
-  userSel.value = activos.some((u) => u.id === DB.usuarioActual) ? DB.usuarioActual : activos[0].id;
-  syncPassField();
-  userSel.addEventListener('change', () => { err.textContent = ''; syncPassField(); });
+    </form>`);
+  const email = $('#loginEmail', ls), pass = $('#loginPass', ls), err = $('#loginErr', ls);
+  try { email.value = localStorage.getItem('zw_ultimo_email') || ''; } catch (e) {}
   $('#forgotLink', ls).addEventListener('click', async (e) => {
     e.preventDefault();
-    const u = activos.find((x) => x.id === userSel.value); if (!u) return;
-    if (!(await confirmBox('Quitar contraseña', `Esta aplicación guarda los datos solo en este navegador, sin servidor, así que no existe un correo de recuperación. Se quitará la contraseña de <b>${esc(u.nombre)}</b> (ningún otro dato se borra), y cualquiera con acceso a este navegador podrá entrar como ${esc(u.nombre)} sin contraseña hasta que configures una nueva desde "Usuarios y permisos". ¿Continuar?`, 'Quitar contraseña'))) return;
-    u.passHash = ''; persist();
-    audit('Editar', 'Usuario', u.codigo || u.nombre, 'Contraseña eliminada desde "Olvidé mi contraseña"');
-    err.textContent = ''; passIn.value = ''; syncPassField();
-    toast('Contraseña eliminada. Ya puedes entrar.');
+    if (!/^\S+@\S+\.\S+$/.test(email.value.trim())) { err.textContent = 'Escribe tu correo y vuelve a pulsar "¿Olvidaste tu contraseña?".'; return email.focus(); }
+    try { await Nube.recuperar(email.value.trim()); err.style.color = 'var(--ok)'; err.textContent = 'Te hemos enviado un correo con un enlace para crear una contraseña nueva.'; }
+    catch (ex) { err.style.color = 'var(--bad)'; err.textContent = ex.message; }
   });
   $('#loginForm', ls).addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const u = activos.find((x) => x.id === userSel.value); if (!u) return;
-    if (!(await checkPassword(u, passIn.value))) { err.textContent = 'Contraseña incorrecta.'; passIn.value = ''; passIn.focus(); return; }
-    DB.usuarioActual = u.id; persist(); setLoggedIn(u.id);
-    enterApp();
+    e.preventDefault(); err.style.color = 'var(--bad)'; err.textContent = '';
+    const btn = $('button[type=submit]', ls); btn.disabled = true;
+    try {
+      await Nube.entrar(email.value.trim(), pass.value);
+      try { localStorage.setItem('zw_ultimo_email', email.value.trim()); } catch (x) {}
+      await enterApp();
+    } catch (ex) { err.textContent = ex.message; pass.value = ''; pass.focus(); }
+    finally { btn.disabled = false; }
   });
-  (passWrap.style.display === 'none' ? userSel : passIn).focus();
+  (email.value ? pass : email).focus();
 }
-if (isLoggedIn()) enterApp(); else showLogin();
+/* Primera vez: no hay ninguna empresa en el servidor → alta de la empresa y del administrador */
+function showSetup() {
+  const ls = pantalla(`<h1>Configuración inicial</h1><p class="hint" style="margin-top:-6px">Crea la empresa y la cuenta del administrador. Este paso solo aparece una vez.</p>
+    <form id="setupForm" novalidate><div class="form-grid">
+      <div class="f s12"><label>Empresa (razón social)</label><input class="in" name="razon" value="ZEWÁ REFORMAS"></div>
+      <div class="f s6"><label>NIF / CIF</label><input class="in" name="nif"></div>
+      <div class="f s6"><label>Teléfono</label><input class="in" name="tel"></div>
+      <div class="f s12"><label>Nombre del administrador</label><input class="in" name="nombre"></div>
+      <div class="f s12"><label>Correo del administrador</label><input class="in" type="email" name="email" autocomplete="username"></div>
+      <div class="f s6"><label>Contraseña</label><input class="in" type="password" name="p1" autocomplete="new-password"></div>
+      <div class="f s6"><label>Repetir contraseña</label><input class="in" type="password" name="p2" autocomplete="new-password"></div>
+    </div><p class="hint" id="setErr" style="color:var(--bad);min-height:16px"></p>
+    <button class="btn primary" style="width:100%;justify-content:center" type="submit">${ico('check')}Crear y entrar</button></form>`);
+  const f = $('#setupForm', ls), err = $('#setErr', ls);
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const v = Object.fromEntries(new FormData(f).entries());
+    if (!v.razon.trim() || !v.nombre.trim() || !/^\S+@\S+\.\S+$/.test(v.email.trim())) { err.textContent = 'Completa empresa, nombre y un correo válido.'; return; }
+    if (v.p1.length < 8) { err.textContent = 'La contraseña debe tener al menos 8 caracteres.'; return; }
+    if (v.p1 !== v.p2) { err.textContent = 'Las contraseñas no coinciden.'; return; }
+    const btn = $('button[type=submit]', f); btn.disabled = true; err.textContent = '';
+    try {
+      await Nube.invocar('bootstrap', { empresa: { razon_social: v.razon.trim(), nif: v.nif.trim(), telefono: v.tel.trim(), email: v.email.trim() }, usuario: { nombre: v.nombre.trim(), email: v.email.trim().toLowerCase(), password: v.p1 }, roles: defaultRoles() });
+      await Nube.entrar(v.email.trim().toLowerCase(), v.p1);
+      await enterApp();
+    } catch (ex) { err.textContent = ex.message; btn.disabled = false; }
+  });
+}
+function showNewPassword() {
+  const ls = pantalla(`<h1>Crea tu nueva contraseña</h1><form id="npForm" novalidate>
+    <div class="f s12"><label>Nueva contraseña</label><input class="in" type="password" id="np1" autocomplete="new-password"></div>
+    <div class="f s12"><label>Repetir contraseña</label><input class="in" type="password" id="np2" autocomplete="new-password"></div>
+    <p class="hint" id="npErr" style="color:var(--bad);min-height:16px"></p>
+    <button class="btn primary" style="width:100%;justify-content:center" type="submit">${ico('check')}Guardar y entrar</button></form>`);
+  $('#npForm', ls).addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const p1 = $('#np1', ls).value, p2 = $('#np2', ls).value, err = $('#npErr', ls);
+    if (p1.length < 8) { err.textContent = 'Mínimo 8 caracteres.'; return; }
+    if (p1 !== p2) { err.textContent = 'Las contraseñas no coinciden.'; return; }
+    try { await Nube.nuevaPassword(p1); history.replaceState(null, '', location.pathname); await enterApp(); } catch (ex) { err.textContent = ex.message; }
+  });
+}
+async function boot() {
+  pantalla(`<p class="hint" style="text-align:center">Conectando…</p>`);
+  let recuperando = /type=recovery/.test(location.hash);
+  Nube.onAuth((ev) => { if (ev === 'PASSWORD_RECOVERY') { recuperando = true; showNewPassword(); } });
+  try {
+    const ses = await Nube.sesion();
+    if (recuperando) return showNewPassword();
+    if (ses) return enterApp();
+    const { inicializado } = await Nube.estado();
+    if (inicializado) showLogin(); else showSetup();
+  } catch (e) {
+    showLogin('No se pudo conectar con el servidor: ' + e.message);
+  }
+}
+boot();

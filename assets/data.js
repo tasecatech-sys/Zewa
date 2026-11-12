@@ -1,9 +1,9 @@
 /* ==========================================================
-   Capa de datos: almacenamiento local, reglas de negocio,
+   Capa de datos: modelo en memoria, reglas de negocio,
    numeración, cálculos financieros y auditoría.
-   En producción se reemplaza por Supabase (ver supabase_facturacion.sql).
+   Persistencia en Supabase: ver assets/nube.js y supabase_facturacion.sql.
    ========================================================== */
-const DB_KEY = 'tsf_db_v1';
+const DB_KEY = 'tsf_db_v1'; // datos de la versión anterior (solo navegador), para migrarlos
 
 /* ---------- usuarios, roles y permisos por módulo ---------- */
 const MODULOS = [
@@ -40,23 +40,6 @@ function defaultUsuarios() {
     { id: 'contable', codigo: 'USR-0003', nombre: 'Carlos Ruiz', email: 'carlos@zewareformas.es', rolId: 'rol_contable', activo: true, passHash: '', creado: new Date().toISOString(), creadoPor: 'Sistema' },
   ];
 }
-/* ---------- contraseñas ----------
-   Aviso: esta app guarda todo en localStorage del navegador, sin servidor.
-   El hash evita que alguien vea la contraseña a simple vista, pero no es una
-   autenticación real: quien tenga acceso a ese navegador puede editar o
-   borrar localStorage directamente. Sirve para evitar cambios accidentales
-   de sesión entre compañeros, no para proteger datos sensibles. */
-async function hashPassword(pass, salt) {
-  const text = `${salt}::${pass || ''}`;
-  if (window.crypto?.subtle) {
-    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
-    return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
-  }
-  let h = 0; for (let i = 0; i < text.length; i++) h = (h * 31 + text.charCodeAt(i)) >>> 0;
-  return 'f' + h.toString(16);
-}
-async function setPassword(u, pass) { u.passHash = pass ? await hashPassword(pass, u.id) : ''; }
-async function checkPassword(u, pass) { return !u.passHash || (await hashPassword(pass || '', u.id)) === u.passHash; }
 
 const ESTADOS_COT = ['Borrador', 'Enviado', 'Aprobado', 'Facturado', 'Vencido', 'Anulado'];
 const FORMAS_PAGO = ['Transferencia', 'Bizum', 'Tarjeta', 'Domiciliación', 'Efectivo'];
@@ -74,6 +57,10 @@ const BLOQUES = {
   firma: 'Firmas',
   pie: 'Pie de página',
 };
+
+/* ---------- identidad visual Zewá ---------- */
+const ZEWA_COLORES = { azul: '#283d6a', dorado: '#c19c73', linea: '#b8a48f' };
+const ZEWA_LOGO = 'assets/img/zewa-logo.png';
 
 /* ---------- helpers ---------- */
 const uid = (p = 'id') => p + '_' + Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-4);
@@ -99,28 +86,37 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const norm = (s) => String(s ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
 const clone = (o) => JSON.parse(JSON.stringify(o));
 
-/* ---------- store ---------- */
+/* ---------- store ----------
+   Los datos viven en Supabase (assets/nube.js). DB es la copia en memoria
+   del usuario conectado; Store.save() envía al servidor lo que cambió. */
 let DB;
 const Store = {
-  load() {
-    try { DB = JSON.parse(localStorage.getItem(DB_KEY)); } catch (e) { DB = null; }
-    if (!DB || !DB.version) { DB = seed(); this.save(); }
+  /* Completa valores por defecto tras cargar desde el servidor */
+  prepare() {
     DB.empresa = { moneda: 'EUR', ivaDefault: 21, pais: 'España', codigoPostal: '', provincia: '', ...DB.empresa };
-    DB.inventario = DB.inventario || [];
-    DB.roles = DB.roles && DB.roles.length ? DB.roles : defaultRoles();
-    DB.usuarios = DB.usuarios && DB.usuarios.length ? DB.usuarios : defaultUsuarios();
-    DB.usuarios.forEach((u) => { if (u.passHash === undefined) u.passHash = ''; });
-    DB.seq = { COT: 0, FAC: 0, ABO: 0, CLI: 0, INV: 0, USR: DB.usuarios.length, ...DB.seq };
-    if (!DB.usuarioActual || !DB.usuarios.find((u) => u.id === DB.usuarioActual)) DB.usuarioActual = DB.usuarios[0]?.id;
-    migrarLexicoES(DB); this.save();
+    ['clientes', 'cotizaciones', 'abonos', 'facturas', 'plantillas', 'documentos', 'auditoria', 'inventario', 'roles', 'usuarios'].forEach((k) => { DB[k] = DB[k] || []; });
+    DB.seq = { COT: 0, FAC: 0, ABO: 0, CLI: 0, INV: 0, USR: 0, ...DB.seq };
+    migrarLexicoES(DB);
+    this.syncSeq();
     return DB;
   },
-  save() {
-    try { localStorage.setItem(DB_KEY, JSON.stringify(DB)); return true; }
-    catch (e) { console.error(e); if (window.toast) toast('Almacenamiento lleno: libera documentos adjuntos.', 'bad'); return false; }
+  /* Ajusta los contadores al mayor número ya usado (tras cargar o importar) */
+  syncSeq() {
+    const y = new Date().getFullYear();
+    const max = (list, campo, pref, anual) => list.reduce((m, o) => {
+      const r = String(o[campo] || '').match(anual ? new RegExp(`^${pref}-${y}-(\\d+)$`) : new RegExp(`^${pref}-(\\d+)$`));
+      return r ? Math.max(m, +r[1]) : m;
+    }, 0);
+    const S = DB.seq;
+    S.COT = Math.max(S.COT || 0, max(DB.cotizaciones, 'numero', 'PRE', true));
+    S.FAC = Math.max(S.FAC || 0, max(DB.facturas, 'numero', 'FAC', true));
+    S.ABO = Math.max(S.ABO || 0, max(DB.abonos, 'numero', 'REC', true));
+    S.CLI = Math.max(S.CLI || 0, max(DB.clientes, 'codigo', 'CLI', false));
+    S.INV = Math.max(S.INV || 0, max(DB.inventario, 'codigo', 'INV', false));
+    S.USR = Math.max(S.USR || 0, max(DB.usuarios, 'codigo', 'USR', false));
   },
-  reset() { localStorage.removeItem(DB_KEY); DB = seed(); this.save(); },
-  user() { return DB.usuarios.find((u) => u.id === DB.usuarioActual) || DB.usuarios[0]; },
+  save() { return Nube.persist(); },
+  user() { return DB.usuarios.find((u) => u.id === DB.usuarioActual) || { id: '', nombre: 'Sistema', rolId: '' }; },
   nextNumber(tipo) {
     const year = new Date().getFullYear();
     const pref = { COT: 'PRE', FAC: 'FAC', ABO: 'REC', CLI: 'CLI', INV: 'INV', USR: 'USR' }[tipo];
@@ -249,9 +245,11 @@ function defaultTemplateConfig(tipo) {
     abono: ['encabezado', 'cliente', 'general', 'detalle', 'totales', 'banco', 'notas', 'firma', 'pie'],
   }[tipo];
   return {
-    color: '#1d4ed8', color2: '#0f172a', fuente: 'Inter', logo: '',
+    // Estilo corporativo Zewá (membrete "Plantilla Zewa.docx"): azul marino + dorado, logo arriba a la izquierda
+    estilo: 'zewa', color: ZEWA_COLORES.azul, color2: ZEWA_COLORES.dorado, fuente: 'Montserrat', logo: ZEWA_LOGO,
     encabezado: 'ZEWÁ REFORMAS · NIF B00000000\nCalle Ejemplo, 1 · 28001 Madrid · 641 486 231',
-    pie: 'Gracias por su confianza · zewareformas@gmail.com · 641 486 231',
+    contacto: 'contacto@zewa.com',
+    pie: 'Gracias por su confianza · contacto@zewa.com',
     firmaNombre: 'ZEWÁ REFORMAS', firmaCargo: 'Gerencia',
     bloques: orden.map((k) => ({ k, on: true })),
     html: '', pdfBase: '',

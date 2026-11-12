@@ -5,7 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>ZEWÁ · Presupuestos y Facturación</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Montserrat:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="icon" type="image/png" href="assets/img/zewa-marca.png">
   <link rel="stylesheet" href="assets/app.css">
   <script>
     try { const t = localStorage.getItem('tsf_theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
@@ -16,11 +17,11 @@
   <div class="app" id="appShell" hidden>
     <aside class="sidebar" id="sidebar">
       <div class="brand">
-        <div class="brand-mark">T</div>
-        <div><b>ZEWÁ</b><small>Presupuestos y Facturación</small></div>
+        <img src="assets/img/zewa-logo-blanco.png" alt="ZEWÁ Reformas" class="brand-logo">
+        <small>Presupuestos y Facturación</small>
       </div>
       <nav class="nav" id="nav"></nav>
-      <div class="sidebar-foot">Datos guardados en este navegador · v1.0</div>
+      <div class="sidebar-foot"><span id="syncState" data-st="ok">Conectado al servidor</span> · v2.0</div>
     </aside>
 
     <div class="main">
@@ -34,10 +35,10 @@
         </div>
         <div class="top-actions">
           <button class="btn icon ghost" id="themeBtn" title="Modo claro / oscuro" aria-label="Cambiar tema"><svg class="i"><use href="#i-moon"/></svg></button>
-          <div class="user-chip">
+          <button class="user-chip" id="userChip" type="button" title="Cambiar mi contraseña">
             <div class="avatar" id="avatar">AD</div>
-            <select id="userSel" aria-label="Usuario actual"></select>
-          </div>
+            <div class="user-txt"><b id="userName"></b><small id="userRol"></small></div>
+          </button>
           <button class="btn icon ghost" id="logoutBtn" title="Cerrar sesión" aria-label="Cerrar sesión"><svg class="i"><use href="#i-back"/></svg></button>
         </div>
       </header>
@@ -85,7 +86,9 @@
     <symbol id="i-paperclip" viewBox="0 0 24 24"><path d="m21.4 11-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/></symbol>
   </svg>
 
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
   <script src="assets/data.js"></script>
+  <script src="assets/nube.js"></script>
   <script src="assets/charts.js"></script>
   <script src="assets/word.js"></script>
   <script src="assets/app.js"></script>
