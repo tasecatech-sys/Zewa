@@ -1,348 +1,515 @@
 -- =====================================================================
--- TASECA · Sistema de Cotización y Facturación — esquema para Supabase
--- Ciclo: Cliente → Cotización → Abono → Factura → Pago final
--- Multiempresa (cada suscriptor = una "empresa"), RLS, auditoría automática
--- y plantillas versionadas inmutables.
+-- ZEWÁ · Presupuestos y Facturación — esquema Supabase (v2)
+-- Alineado con el modelo de la aplicación (assets/data.js) y con España
+-- (EUR, IVA 21 %, NIF, provincia, localidad).
+--
+-- Los identificadores son de texto para conservar los que genera la app
+-- (cli_xxx, cot_xxx…) y poder importar respaldos JSON sin transformarlos.
+-- Toda tabla tiene RLS por empresa y por permiso de módulo del rol.
+-- Los campos que la app maneja y no tienen columna propia se guardan en
+-- `extra` (jsonb), así no se pierde ningún dato.
 -- =====================================================================
 
-create extension if not exists pgcrypto;
+-- ---------- Limpieza del esquema v1 (estaba vacío) ----------
+drop view if exists public.fac_v_facturas, public.fac_v_proyectos;
+drop table if exists public.fac_auditoria, public.fac_documento_versiones, public.fac_documentos,
+  public.fac_abonos, public.fac_lineas, public.fac_facturas, public.fac_cotizaciones,
+  public.fac_plantilla_versiones, public.fac_plantillas, public.fac_inventario, public.fac_clientes,
+  public.fac_consecutivos, public.fac_usuarios, public.fac_roles, public.fac_empresas cascade;
+drop function if exists public.fac_mi_empresa() cascade;
+drop function if exists public.fac_crear_empresa(text, text, text) cascade;
+drop function if exists public.fac_siguiente_numero(text) cascade;
+drop function if exists public.fac_trasladar_abonos() cascade;
+drop function if exists public.fac_auditar() cascade;
+drop function if exists public.fac_permiso(text) cascade;
+drop function if exists public.fac_gestiona(text[]) cascade;
+drop function if exists public.fac_asignar_numero() cascade;
+drop function if exists public.fac_guardar_lineas(text, text, jsonb) cascade;
+drop policy if exists fac_docs_select on storage.objects;
+drop policy if exists fac_docs_insert on storage.objects;
+drop policy if exists fac_docs_update on storage.objects;
+drop policy if exists fac_docs_delete on storage.objects;
 
--- ---------- Empresas (tenant) y usuarios ----------
-create table if not exists fac_empresas (
+-- ---------- Tablas ----------
+create table public.fac_empresas (
   id uuid primary key default gen_random_uuid(),
   razon_social text not null,
-  nit text not null,
-  direccion text, ciudad text, telefono text, email text,
-  banco text, titular text, cuenta text,
-  creado timestamptz not null default now()
+  nif text,
+  direccion text,
+  codigo_postal text,
+  localidad text,
+  provincia text,
+  pais text not null default 'España',
+  telefono text,
+  email text,
+  banco text,
+  titular text,
+  cuenta text,
+  moneda text not null default 'EUR' check (moneda in ('EUR', 'COP', 'USD', 'MXN')),
+  iva_default numeric not null default 21,
+  extra jsonb not null default '{}',
+  creado timestamptz not null default now(),
+  actualizado timestamptz
 );
 
-create table if not exists fac_usuarios (
-  user_id uuid primary key references auth.users(id) on delete cascade,
-  empresa_id uuid not null references fac_empresas(id) on delete cascade,
+create table public.fac_roles (
+  id text primary key,
+  empresa_id uuid not null references public.fac_empresas on delete cascade,
   nombre text not null,
-  rol text not null default 'Comercial' check (rol in ('Administrador','Comercial','Contabilidad','Consulta')),
-  creado timestamptz not null default now()
+  descripcion text,
+  sistema boolean not null default false,
+  permisos jsonb not null default '{}',
+  extra jsonb not null default '{}',
+  creado timestamptz not null default now(),
+  actualizado timestamptz,
+  unique (empresa_id, nombre)
 );
 
-create or replace function fac_mi_empresa() returns uuid
-language sql stable security definer set search_path = public as $$
-  select empresa_id from fac_usuarios where user_id = auth.uid()
-$$;
+create table public.fac_usuarios (
+  id text primary key,
+  empresa_id uuid not null references public.fac_empresas on delete cascade,
+  auth_user_id uuid unique references auth.users on delete set null,
+  codigo text,
+  nombre text not null,
+  email text,
+  rol_id text not null references public.fac_roles,
+  activo boolean not null default true,
+  extra jsonb not null default '{}',
+  creado timestamptz not null default now(),
+  creado_por text,
+  actualizado timestamptz,
+  unique (empresa_id, codigo)
+);
 
--- Consecutivos por empresa, tipo y año (sin huecos por concurrencia)
-create table if not exists fac_consecutivos (
-  empresa_id uuid not null references fac_empresas(id) on delete cascade,
-  tipo text not null check (tipo in ('PRE','FAC','REC','CLI'))  -- presupuesto, factura, recibo de cobro, cliente,
-  anio int not null,
-  ultimo int not null default 0,
+create table public.fac_consecutivos (
+  empresa_id uuid not null references public.fac_empresas on delete cascade,
+  tipo text not null,          -- COT, FAC, ABO, CLI, INV, USR
+  anio integer not null,       -- 0 para códigos sin año (CLI, INV, USR)
+  ultimo integer not null default 0,
   primary key (empresa_id, tipo, anio)
 );
 
-create or replace function fac_siguiente_numero(p_tipo text) returns text
-language plpgsql security definer set search_path = public as $$
-declare v_emp uuid := fac_mi_empresa(); v_anio int := extract(year from now()); v_n int;
-begin
-  insert into fac_consecutivos (empresa_id, tipo, anio, ultimo) values (v_emp, p_tipo, case when p_tipo = 'CLI' then 0 else v_anio end, 1)
-  on conflict (empresa_id, tipo, anio) do update set ultimo = fac_consecutivos.ultimo + 1
-  returning ultimo into v_n;
-  return case when p_tipo = 'CLI' then 'CLI-' || lpad(v_n::text, 4, '0')
-              else p_tipo || '-' || v_anio || '-' || lpad(v_n::text, 4, '0') end;
-end $$;
-
--- ---------- Clientes ----------
-create table if not exists fac_clientes (
-  id uuid primary key default gen_random_uuid(),
-  empresa_id uuid not null default fac_mi_empresa() references fac_empresas(id) on delete cascade,
-  codigo text not null,
-  tipo_persona text not null check (tipo_persona in ('Física','Jurídica')),
+create table public.fac_clientes (
+  id text primary key,
+  empresa_id uuid not null references public.fac_empresas on delete cascade,
+  codigo text,
+  tipo text,                   -- Física / Jurídica
   razon_social text not null,
-  nombre_comercial text not null,
-  nit text not null,
-  telefono text, celular text,
-  email text not null,
-  direccion text not null, ciudad text not null, departamento text not null /* provincia */, codigo_postal text, pais text not null default 'España',
-  contacto text not null, cargo_contacto text not null,
+  nombre_comercial text,
+  nif text,
+  telefono text,
+  movil text,
+  email text,
+  direccion text,
+  codigo_postal text,
+  localidad text,
+  provincia text,
+  pais text default 'España',
+  contacto text,
+  cargo text,
   observaciones text,
+  extra jsonb not null default '{}',
   creado timestamptz not null default now(),
-  creado_por uuid default auth.uid(),
+  creado_por text,
   actualizado timestamptz,
-  unique (empresa_id, codigo),
-  unique (empresa_id, nit),
-  check (coalesce(telefono, '') <> '' or coalesce(celular, '') <> '')
+  unique (empresa_id, codigo)
 );
-create index if not exists fac_clientes_busqueda on fac_clientes using gin (to_tsvector('spanish', razon_social || ' ' || nombre_comercial || ' ' || nit || ' ' || email));
+create index on public.fac_clientes (empresa_id, nif);
 
--- ---------- Plantillas versionadas ----------
-create table if not exists fac_plantillas (
-  id uuid primary key default gen_random_uuid(),
-  empresa_id uuid not null default fac_mi_empresa() references fac_empresas(id) on delete cascade,
-  tipo text not null check (tipo in ('cotizacion','factura','abono')),
+create table public.fac_inventario (
+  id text primary key,
+  empresa_id uuid not null references public.fac_empresas on delete cascade,
+  codigo text,
+  tipo text,                   -- Servicio / Material
+  categoria text,
+  unidad text,
   nombre text not null,
-  estado text not null default 'Inactiva' check (estado in ('Activa','Inactiva')),
+  descripcion text,
+  costo numeric,
+  precio_venta numeric,
+  iva numeric,
+  estado text default 'Activo',
+  extra jsonb not null default '{}',
   creado timestamptz not null default now(),
-  creado_por uuid default auth.uid()
+  creado_por text,
+  actualizado timestamptz,
+  unique (empresa_id, codigo)
 );
--- Solo una plantilla activa por tipo y empresa
-create unique index if not exists fac_plantillas_una_activa on fac_plantillas (empresa_id, tipo) where estado = 'Activa';
 
--- Las versiones son INMUTABLES: editar = insertar una versión nueva.
--- Los documentos guardan (plantilla_id, plantilla_version), así el histórico nunca cambia.
-create table if not exists fac_plantilla_versiones (
-  plantilla_id uuid not null references fac_plantillas(id) on delete cascade,
-  version int not null,
-  config jsonb not null,           -- colores, fuente, logo_url, encabezado, pie, firma, bloques[], html, pdf_base_url
-  nota text,
+create table public.fac_plantillas (
+  id text primary key,
+  empresa_id uuid not null references public.fac_empresas on delete cascade,
+  tipo text not null check (tipo in ('cotizacion', 'factura', 'abono')),
+  nombre text not null,
+  estado text not null default 'Inactiva' check (estado in ('Activa', 'Inactiva')),
+  extra jsonb not null default '{}',
   creado timestamptz not null default now(),
-  creado_por uuid default auth.uid(),
+  creado_por text
+);
+
+-- Versiones inmutables: solo INSERT (no hay políticas de UPDATE ni DELETE)
+create table public.fac_plantilla_versiones (
+  plantilla_id text not null references public.fac_plantillas on delete cascade,
+  version integer not null,
+  empresa_id uuid not null references public.fac_empresas on delete cascade,
+  fecha timestamptz not null default now(),
+  usuario text,
+  nota text,
+  config jsonb not null,
   primary key (plantilla_id, version)
 );
 
--- ---------- Cotizaciones (presupuestos) ----------
-create table if not exists fac_cotizaciones (
-  id uuid primary key default gen_random_uuid(),
-  empresa_id uuid not null default fac_mi_empresa() references fac_empresas(id) on delete cascade,
+create table public.fac_cotizaciones (
+  id text primary key,
+  empresa_id uuid not null references public.fac_empresas on delete cascade,
   numero text not null,
   fecha date not null default current_date,
-  vence date not null,
-  proyecto text not null,
+  vence date,
+  proyecto text,
   descripcion text,
-  cliente_id uuid not null references fac_clientes(id),
-  validez text, forma_pago text, tiempo_ejecucion text, observaciones text,
+  cliente_id text not null references public.fac_clientes,
+  validez text,
+  forma_pago text,
+  tiempo_ejecucion text,
+  observaciones text,
   responsable text,
-  estado text not null default 'Borrador' check (estado in ('Borrador','Enviado','Aprobado','Facturado','Anulado')),
-  plantilla_id uuid, plantilla_version int,
-  firmas jsonb not null default '{}'::jsonb,   -- {emisor:{img_url,nombre,fecha,usuario}, cliente:{...}}
+  estado text not null default 'Borrador'
+    check (estado in ('Borrador', 'Enviado', 'Aprobado', 'Facturado', 'Vencido', 'Anulado')),
+  plantilla_id text,
+  plantilla_version integer,
+  factura_id text,             -- sin FK para evitar el ciclo presupuesto ↔ factura
+  firmas jsonb not null default '{}',
+  extra jsonb not null default '{}',
   creado timestamptz not null default now(),
-  creado_por uuid default auth.uid(),
+  creado_por text,
   actualizado timestamptz,
-  unique (empresa_id, numero),
-  check (vence >= fecha),
-  foreign key (plantilla_id, plantilla_version) references fac_plantilla_versiones(plantilla_id, version)
+  unique (empresa_id, numero)
 );
+create index on public.fac_cotizaciones (empresa_id, cliente_id);
 
--- ---------- Facturas ----------
-create table if not exists fac_facturas (
-  id uuid primary key default gen_random_uuid(),
-  empresa_id uuid not null default fac_mi_empresa() references fac_empresas(id) on delete cascade,
+create table public.fac_facturas (
+  id text primary key,
+  empresa_id uuid not null references public.fac_empresas on delete cascade,
   numero text not null,
   fecha date not null default current_date,
   fecha_operacion date,
   vence date,
-  cliente_id uuid not null references fac_clientes(id),
-  cotizacion_id uuid references fac_cotizaciones(id),
-  metodo_pago text check (metodo_pago in ('Transferencia','Bizum','Tarjeta','Domiciliación','Efectivo')),
-  banco text, titular text, cuenta text, observaciones text,
-  estado text not null default 'Emitida' check (estado in ('Emitida','Anulada')),  -- Pendiente/En Proceso/Pagada/Vencida se calculan (vista)
-  plantilla_id uuid, plantilla_version int,
-  firmas jsonb not null default '{}'::jsonb,
+  cliente_id text not null references public.fac_clientes,
+  cotizacion_id text references public.fac_cotizaciones on delete set null,
+  metodo_pago text,
+  banco text,
+  titular text,
+  cuenta text,
+  observaciones text,
+  estado text not null default 'Emitida' check (estado in ('Emitida', 'Anulada')),
+  plantilla_id text,
+  plantilla_version integer,
+  firmas jsonb not null default '{}',
+  extra jsonb not null default '{}',
   creado timestamptz not null default now(),
-  creado_por uuid default auth.uid(),
+  creado_por text,
   actualizado timestamptz,
-  unique (empresa_id, numero),
-  foreign key (plantilla_id, plantilla_version) references fac_plantilla_versiones(plantilla_id, version)
+  unique (empresa_id, numero)
 );
-create unique index if not exists fac_facturas_una_por_cotizacion on fac_facturas (cotizacion_id) where estado <> 'Anulada' and cotizacion_id is not null;
+create index on public.fac_facturas (empresa_id, cliente_id);
 
--- ---------- Líneas de detalle (cotizaciones y facturas) ----------
-create table if not exists fac_lineas (
+create table public.fac_lineas (
   id uuid primary key default gen_random_uuid(),
-  cotizacion_id uuid references fac_cotizaciones(id) on delete cascade,
-  factura_id uuid references fac_facturas(id) on delete cascade,
-  orden int not null default 0,
-  concepto text not null,
+  empresa_id uuid not null references public.fac_empresas on delete cascade,
+  cotizacion_id text references public.fac_cotizaciones on delete cascade,
+  factura_id text references public.fac_facturas on delete cascade,
+  orden integer not null default 0,
+  inventario_id text,
+  concepto text not null default '',
   descripcion text,
-  cantidad numeric(14,4) not null check (cantidad >= 0),
-  valor_unitario numeric(16,2) not null check (valor_unitario >= 0),
-  descuento_pct numeric(5,2) not null default 0 check (descuento_pct between 0 and 100),
-  iva_pct numeric(5,2) not null default 21 check (iva_pct between 0 and 100),
-  subtotal numeric(16,2) generated always as (round(cantidad * valor_unitario * (1 - descuento_pct / 100), 2)) stored,
-  total_linea numeric(16,2) generated always as (round(cantidad * valor_unitario * (1 - descuento_pct / 100) * (1 + iva_pct / 100), 2)) stored,
+  cantidad numeric not null default 0,
+  valor_unitario numeric not null default 0,
+  descuento_pct numeric not null default 0,
+  iva_pct numeric not null default 21,
+  subtotal numeric generated always as (round(cantidad * valor_unitario * (1 - descuento_pct / 100), 2)) stored,
+  total_linea numeric generated always as (round(cantidad * valor_unitario * (1 - descuento_pct / 100) * (1 + iva_pct / 100), 2)) stored,
+  extra jsonb not null default '{}',
   check ((cotizacion_id is null) <> (factura_id is null))
 );
+create index on public.fac_lineas (cotizacion_id);
+create index on public.fac_lineas (factura_id);
 
--- ---------- Abonos (cobros / pagos a cuenta) ----------
-create table if not exists fac_abonos (
-  id uuid primary key default gen_random_uuid(),
-  empresa_id uuid not null default fac_mi_empresa() references fac_empresas(id) on delete cascade,
+create table public.fac_abonos (
+  id text primary key,
+  empresa_id uuid not null references public.fac_empresas on delete cascade,
   numero text not null,
   fecha date not null default current_date,
-  cliente_id uuid not null references fac_clientes(id),
-  cotizacion_id uuid references fac_cotizaciones(id),
-  factura_id uuid references fac_facturas(id),
-  concepto text not null,
+  cliente_id text not null references public.fac_clientes,
+  cotizacion_id text references public.fac_cotizaciones on delete set null,
+  factura_id text references public.fac_facturas on delete set null,
+  concepto text not null default '',
   referencia text,
-  forma_pago text not null check (forma_pago in ('Transferencia','Bizum','Tarjeta','Domiciliación','Efectivo')),
+  forma_pago text,
   banco text,
-  valor numeric(16,2) not null check (valor > 0),
-  estado text not null default 'Aplicado' check (estado in ('Aplicado','Anulado')),
-  plantilla_id uuid, plantilla_version int,
-  firmas jsonb not null default '{}'::jsonb,
+  valor numeric not null default 0,
+  estado text not null default 'Aplicado' check (estado in ('Aplicado', 'Anulado')),
+  plantilla_id text,
+  plantilla_version integer,
+  firmas jsonb not null default '{}',
+  extra jsonb not null default '{}',
   creado timestamptz not null default now(),
-  creado_por uuid default auth.uid(),
-  unique (empresa_id, numero),
-  check (cotizacion_id is not null or factura_id is not null)
+  creado_por text,
+  actualizado timestamptz,
+  unique (empresa_id, numero)
 );
 
--- Al facturar un presupuesto, sus anticipos pasan a la factura
-create or replace function fac_trasladar_abonos() returns trigger language plpgsql as $$
-begin
-  if new.cotizacion_id is not null and new.estado = 'Emitida' then
-    update fac_abonos set factura_id = new.id where cotizacion_id = new.cotizacion_id and estado = 'Aplicado' and factura_id is null;
-    update fac_cotizaciones set estado = 'Facturado' where id = new.cotizacion_id;
-  end if;
-  return new;
-end $$;
-drop trigger if exists trg_fac_trasladar_abonos on fac_facturas;
-create trigger trg_fac_trasladar_abonos after insert on fac_facturas for each row execute function fac_trasladar_abonos();
-
--- ---------- Vistas financieras ----------
-create or replace view fac_v_facturas with (security_invoker = on) as
-select f.*,
-  coalesce(t.base, 0) as base_imponible,
-  coalesce(t.iva, 0) as iva,
-  coalesce(t.total, 0) as total,
-  coalesce(a.abonado, 0) as abonos_aplicados,
-  greatest(coalesce(t.total, 0) - coalesce(a.abonado, 0), 0) as saldo_pendiente,
-  case
-    when f.estado = 'Anulada' then 'Anulada'
-    when coalesce(t.total, 0) - coalesce(a.abonado, 0) <= 0.5 then 'Pagada'
-    when f.vence < current_date then 'Vencida'
-    when coalesce(a.abonado, 0) > 0 then 'En Proceso'
-    else 'Pendiente'
-  end as estado_pago
-from fac_facturas f
-left join lateral (select sum(subtotal) base, sum(total_linea - subtotal) iva, sum(total_linea) total from fac_lineas l where l.factura_id = f.id) t on true
-left join lateral (select sum(valor) abonado from fac_abonos ab where ab.factura_id = f.id and ab.estado = 'Aplicado') a on true;
-
-create or replace view fac_v_proyectos with (security_invoker = on) as
-select c.id as cotizacion_id, c.empresa_id, c.numero, c.proyecto, c.cliente_id, c.estado,
-  coalesce(t.total, 0) as total_proyecto,
-  coalesce(a.abonado, 0) as total_abonado,
-  greatest(coalesce(t.total, 0) - coalesce(a.abonado, 0), 0) as saldo_pendiente
-from fac_cotizaciones c
-left join lateral (select sum(total_linea) total from fac_lineas l where l.cotizacion_id = c.id) t on true
-left join lateral (
-  select sum(ab.valor) abonado from fac_abonos ab
-  where ab.estado = 'Aplicado'
-    and (ab.cotizacion_id = c.id or ab.factura_id in (select id from fac_facturas where cotizacion_id = c.id and estado <> 'Anulada'))
-) a on true;
-
--- ---------- Gestión documental ----------
--- Archivos en Storage: bucket privado "fac-documentos", ruta {empresa_id}/{cliente_id}/{proyecto|general}/{documento_id}/v{n}-{nombre}
-create table if not exists fac_documentos (
-  id uuid primary key default gen_random_uuid(),
-  empresa_id uuid not null default fac_mi_empresa() references fac_empresas(id) on delete cascade,
-  cliente_id uuid references fac_clientes(id),
+create table public.fac_documentos (
+  id text primary key,
+  empresa_id uuid not null references public.fac_empresas on delete cascade,
+  cliente_id text references public.fac_clientes on delete set null,
   proyecto text,
   nombre text not null,
   mime text,
-  categoria text not null,
+  categoria text,
   etiquetas text[] not null default '{}',
+  extra jsonb not null default '{}',
   creado timestamptz not null default now(),
-  creado_por uuid default auth.uid(),
-  eliminado timestamptz          -- borrado lógico, queda en auditoría
+  creado_por text
 );
-create index if not exists fac_documentos_etiquetas on fac_documentos using gin (etiquetas);
 
-create table if not exists fac_documento_versiones (
-  documento_id uuid not null references fac_documentos(id) on delete cascade,
-  version int not null,
-  storage_path text not null,
+-- El archivo vive en Storage: bucket privado fac-documentos, ruta {empresa}/{documento}/v{n}-{nombre}
+create table public.fac_documento_versiones (
+  documento_id text not null references public.fac_documentos on delete cascade,
+  version integer not null,
+  empresa_id uuid not null references public.fac_empresas on delete cascade,
+  fecha timestamptz not null default now(),
+  usuario text,
   tamano bigint,
-  creado timestamptz not null default now(),
-  creado_por uuid default auth.uid(),
+  storage_path text,
   primary key (documento_id, version)
 );
 
--- ---------- Auditoría (solo inserción) ----------
-create table if not exists fac_auditoria (
-  id bigint generated always as identity primary key,
-  empresa_id uuid,
+-- Auditoría escrita por la app (quién, qué, cambio campo a campo). Solo inserción.
+create table public.fac_auditoria (
+  id text primary key,
+  empresa_id uuid not null references public.fac_empresas on delete cascade,
   fecha timestamptz not null default now(),
-  usuario_id uuid default auth.uid(),
-  accion text not null,          -- INSERT / UPDATE / DELETE o acción de negocio (Firmar, Enviar, Descargar…)
-  tabla text not null,
-  registro_id text,
-  antes jsonb,
-  despues jsonb,
-  cambios jsonb                  -- {campo: [antes, despues]}
+  auth_user_id uuid default auth.uid(),
+  usuario text,
+  rol text,
+  accion text,
+  entidad text,
+  ref text,
+  detalle text,
+  cambios jsonb not null default '[]'
 );
-create index if not exists fac_auditoria_registro on fac_auditoria (tabla, registro_id);
+create index on public.fac_auditoria (empresa_id, fecha desc);
 
-create or replace function fac_auditar() returns trigger
+-- ---------- Funciones de seguridad ----------
+create function public.fac_mi_empresa() returns uuid
+language sql stable security definer set search_path = public as $$
+  select empresa_id from public.fac_usuarios where auth_user_id = auth.uid() and activo limit 1
+$$;
+
+create function public.fac_permiso(modulo text) returns text
+language sql stable security definer set search_path = public as $$
+  select coalesce(r.permisos ->> modulo, 'ninguno')
+  from public.fac_usuarios u join public.fac_roles r on r.id = u.rol_id
+  where u.auth_user_id = auth.uid() and u.activo limit 1
+$$;
+
+create function public.fac_gestiona(variadic modulos text[]) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from unnest(modulos) m where public.fac_permiso(m) = 'gestionar')
+$$;
+
+-- ---------- Numeración sin duplicados por empresa, tipo y año ----------
+-- Respeta el número que propone la app si está libre (así se importan respaldos tal cual);
+-- si está ocupado (dos usuarios a la vez) asigna el siguiente libre.
+-- Args: tipo, columna, prefijo, anual
+create function public.fac_asignar_numero() returns trigger
 language plpgsql security definer set search_path = public as $$
-declare v_old jsonb := case when tg_op <> 'INSERT' then to_jsonb(old) end;
-        v_new jsonb := case when tg_op <> 'DELETE' then to_jsonb(new) end;
-        v_cambios jsonb;
+declare
+  v_tipo text := tg_argv[0];
+  v_col text := tg_argv[1];
+  v_pref text := tg_argv[2];
+  v_anual boolean := tg_argv[3]::boolean;
+  v_num text := to_jsonb(new) ->> v_col;
+  v_anio integer;
+  v_n integer;
+  v_ult integer;
+  v_ocupado boolean;
+  v_m text[];
 begin
-  if tg_op = 'UPDATE' then
-    select jsonb_object_agg(k, jsonb_build_array(v_old -> k, v_new -> k)) into v_cambios
-    from jsonb_object_keys(v_new) k where v_old -> k is distinct from v_new -> k;
-    if v_cambios is null then return new; end if;
+  -- Un upsert de un registro existente también dispara BEFORE INSERT: no tocarlo
+  execute format('select exists (select 1 from %I where id = $1)', tg_table_name) into v_ocupado using new.id;
+  if v_ocupado then return new; end if;
+
+  if v_anual then
+    v_m := regexp_match(coalesce(v_num, ''), '^' || v_pref || '-(\d{4})-(\d+)$');
+    v_anio := coalesce(v_m[1]::integer, extract(year from current_date)::integer);
+    v_n := v_m[2]::integer;
+  else
+    v_m := regexp_match(coalesce(v_num, ''), '^' || v_pref || '-(\d+)$');
+    v_anio := 0;
+    v_n := v_m[1]::integer;
   end if;
-  insert into fac_auditoria (empresa_id, accion, tabla, registro_id, antes, despues, cambios)
-  values (coalesce(v_new ->> 'empresa_id', v_old ->> 'empresa_id')::uuid, tg_op, tg_table_name,
-          coalesce(v_new ->> 'id', v_old ->> 'id', v_new ->> 'plantilla_id', v_new ->> 'documento_id'), v_old, v_new, v_cambios);
-  return coalesce(new, old);
+
+  insert into fac_consecutivos (empresa_id, tipo, anio, ultimo) values (new.empresa_id, v_tipo, v_anio, 0)
+  on conflict do nothing;
+  select ultimo into v_ult from fac_consecutivos
+  where empresa_id = new.empresa_id and tipo = v_tipo and anio = v_anio for update;
+
+  execute format('select exists (select 1 from %I where empresa_id = $1 and %I = $2)', tg_table_name, v_col)
+    into v_ocupado using new.empresa_id, v_num;
+
+  if v_n is null or v_ocupado then
+    v_n := v_ult;
+    loop  -- siguiente número realmente libre
+      v_n := v_n + 1;
+      v_num := case when v_anual then format('%s-%s-%s', v_pref, v_anio, lpad(v_n::text, 4, '0'))
+                    else format('%s-%s', v_pref, lpad(v_n::text, 4, '0')) end;
+      execute format('select exists (select 1 from %I where empresa_id = $1 and %I = $2)', tg_table_name, v_col)
+        into v_ocupado using new.empresa_id, v_num;
+      exit when not v_ocupado;
+    end loop;
+  end if;
+
+  update fac_consecutivos set ultimo = greatest(ultimo, v_n)
+  where empresa_id = new.empresa_id and tipo = v_tipo and anio = v_anio;
+
+  new := jsonb_populate_record(new, jsonb_build_object(v_col, v_num));
+  return new;
 end $$;
 
-do $$
-declare t text;
+create trigger trg_num before insert on public.fac_cotizaciones for each row execute function public.fac_asignar_numero('COT', 'numero', 'PRE', 'true');
+create trigger trg_num before insert on public.fac_facturas     for each row execute function public.fac_asignar_numero('FAC', 'numero', 'FAC', 'true');
+create trigger trg_num before insert on public.fac_abonos       for each row execute function public.fac_asignar_numero('ABO', 'numero', 'REC', 'true');
+create trigger trg_num before insert on public.fac_clientes     for each row execute function public.fac_asignar_numero('CLI', 'codigo', 'CLI', 'false');
+create trigger trg_num before insert on public.fac_inventario   for each row execute function public.fac_asignar_numero('INV', 'codigo', 'INV', 'false');
+create trigger trg_num before insert on public.fac_usuarios     for each row execute function public.fac_asignar_numero('USR', 'codigo', 'USR', 'false');
+
+-- ---------- Líneas de un documento: se reemplazan en una sola transacción ----------
+create function public.fac_guardar_lineas(p_tipo text, p_doc text, p_lineas jsonb) returns void
+language plpgsql security invoker set search_path = public as $$
+declare v_emp uuid := public.fac_mi_empresa();
 begin
-  foreach t in array array['fac_clientes','fac_cotizaciones','fac_facturas','fac_lineas','fac_abonos','fac_plantillas','fac_plantilla_versiones','fac_documentos','fac_documento_versiones','fac_empresas']
-  loop
-    execute format('drop trigger if exists trg_auditar on %I', t);
-    execute format('create trigger trg_auditar after insert or update or delete on %I for each row execute function fac_auditar()', t);
+  if p_tipo = 'cotizacion' then delete from fac_lineas where cotizacion_id = p_doc;
+  else delete from fac_lineas where factura_id = p_doc; end if;
+  insert into fac_lineas (empresa_id, cotizacion_id, factura_id, orden, inventario_id, concepto, descripcion,
+                          cantidad, valor_unitario, descuento_pct, iva_pct, extra)
+  select v_emp,
+         case when p_tipo = 'cotizacion' then p_doc end,
+         case when p_tipo = 'factura' then p_doc end,
+         (e.ord - 1)::integer,
+         nullif(e.x ->> 'invId', ''),
+         coalesce(e.x ->> 'concepto', ''),
+         e.x ->> 'descripcion',
+         coalesce(nullif(e.x ->> 'cantidad', '')::numeric, 0),
+         coalesce(nullif(e.x ->> 'valor', '')::numeric, 0),
+         coalesce(nullif(e.x ->> 'desc', '')::numeric, 0),
+         coalesce(nullif(e.x ->> 'iva', '')::numeric, 0),
+         e.x - array['invId', 'concepto', 'descripcion', 'cantidad', 'valor', 'desc', 'iva']
+  from jsonb_array_elements(coalesce(p_lineas, '[]')) with ordinality as e(x, ord);
+end $$;
+
+-- ---------- Vistas de control financiero ----------
+create view public.fac_v_facturas with (security_invoker = true) as
+select f.id, f.empresa_id, f.numero, f.fecha, f.vence, f.cliente_id, f.estado,
+       coalesce(sum(l.total_linea), 0) as total,
+       coalesce((select sum(a.valor) from public.fac_abonos a where a.factura_id = f.id and a.estado = 'Aplicado'), 0) as cobrado
+from public.fac_facturas f left join public.fac_lineas l on l.factura_id = f.id
+group by f.id;
+
+create view public.fac_v_proyectos with (security_invoker = true) as
+select c.id, c.empresa_id, c.numero, c.proyecto, c.cliente_id, c.estado,
+       coalesce(sum(l.total_linea), 0) as total,
+       coalesce((select sum(a.valor) from public.fac_abonos a
+                 where a.estado = 'Aplicado' and (a.cotizacion_id = c.id or (c.factura_id is not null and a.factura_id = c.factura_id))), 0) as cobrado
+from public.fac_cotizaciones c left join public.fac_lineas l on l.cotizacion_id = c.id
+group by c.id;
+
+-- ---------- RLS ----------
+alter table public.fac_empresas enable row level security;
+alter table public.fac_roles enable row level security;
+alter table public.fac_usuarios enable row level security;
+alter table public.fac_consecutivos enable row level security;
+alter table public.fac_clientes enable row level security;
+alter table public.fac_inventario enable row level security;
+alter table public.fac_plantillas enable row level security;
+alter table public.fac_plantilla_versiones enable row level security;
+alter table public.fac_cotizaciones enable row level security;
+alter table public.fac_facturas enable row level security;
+alter table public.fac_lineas enable row level security;
+alter table public.fac_abonos enable row level security;
+alter table public.fac_documentos enable row level security;
+alter table public.fac_documento_versiones enable row level security;
+alter table public.fac_auditoria enable row level security;
+
+-- Empresa: la ven sus usuarios; la edita quien gestiona Configuración. Se crea con la función de alta.
+create policy sel on public.fac_empresas for select to authenticated using (id = public.fac_mi_empresa());
+create policy upd on public.fac_empresas for update to authenticated using (id = public.fac_mi_empresa() and public.fac_gestiona('config')) with check (id = public.fac_mi_empresa());
+
+create policy sel on public.fac_consecutivos for select to authenticated using (empresa_id = public.fac_mi_empresa());
+
+-- Roles: los del sistema no se modifican ni se borran
+create policy sel on public.fac_roles for select to authenticated using (empresa_id = public.fac_mi_empresa());
+create policy ins on public.fac_roles for insert to authenticated with check (empresa_id = public.fac_mi_empresa() and public.fac_gestiona('usuarios') and not sistema);
+create policy upd on public.fac_roles for update to authenticated using (empresa_id = public.fac_mi_empresa() and public.fac_gestiona('usuarios') and not sistema) with check (empresa_id = public.fac_mi_empresa() and not sistema);
+create policy del on public.fac_roles for delete to authenticated using (empresa_id = public.fac_mi_empresa() and public.fac_gestiona('usuarios') and not sistema);
+
+-- Usuarios: el alta (con su acceso) la hace la función zewa-usuarios; aquí solo se editan
+create policy sel on public.fac_usuarios for select to authenticated using (empresa_id = public.fac_mi_empresa());
+create policy upd on public.fac_usuarios for update to authenticated using (empresa_id = public.fac_mi_empresa() and public.fac_gestiona('usuarios')) with check (empresa_id = public.fac_mi_empresa());
+
+-- Tablas de negocio: leer = pertenecer a la empresa; escribir = gestionar alguno de los módulos indicados
+do $$
+declare t record;
+begin
+  for t in select * from (values
+    ('fac_clientes', array['clientes']),
+    ('fac_inventario', array['inventario']),
+    ('fac_plantillas', array['plantillas']),
+    ('fac_cotizaciones', array['cotizaciones', 'facturas', 'abonos']),
+    ('fac_facturas', array['facturas', 'cotizaciones', 'abonos']),
+    ('fac_lineas', array['cotizaciones', 'facturas']),
+    ('fac_abonos', array['abonos', 'facturas', 'cotizaciones']),
+    ('fac_documentos', array['documentos'])
+  ) as v(tabla, modulos) loop
+    execute format('create policy sel on public.%I for select to authenticated using (empresa_id = public.fac_mi_empresa())', t.tabla);
+    execute format('create policy ins on public.%I for insert to authenticated with check (empresa_id = public.fac_mi_empresa() and public.fac_gestiona(variadic %L::text[]))', t.tabla, t.modulos);
+    execute format('create policy upd on public.%I for update to authenticated using (empresa_id = public.fac_mi_empresa() and public.fac_gestiona(variadic %L::text[])) with check (empresa_id = public.fac_mi_empresa())', t.tabla, t.modulos);
+    execute format('create policy del on public.%I for delete to authenticated using (empresa_id = public.fac_mi_empresa() and public.fac_gestiona(variadic %L::text[]))', t.tabla, t.modulos);
   end loop;
 end $$;
 
--- ---------- Seguridad: RLS por empresa ----------
-do $$
-declare t text;
-begin
-  foreach t in array array['fac_clientes','fac_cotizaciones','fac_facturas','fac_abonos','fac_plantillas','fac_documentos']
-  loop
-    execute format('alter table %I enable row level security', t);
-    execute format('drop policy if exists p_empresa on %I', t);
-    execute format('create policy p_empresa on %I for all to authenticated using (empresa_id = fac_mi_empresa()) with check (empresa_id = fac_mi_empresa())', t);
-  end loop;
-end $$;
+-- Versiones (plantillas y documentos): solo lectura e inserción
+create policy sel on public.fac_plantilla_versiones for select to authenticated using (empresa_id = public.fac_mi_empresa());
+create policy ins on public.fac_plantilla_versiones for insert to authenticated with check (empresa_id = public.fac_mi_empresa() and public.fac_gestiona('plantillas'));
+create policy sel on public.fac_documento_versiones for select to authenticated using (empresa_id = public.fac_mi_empresa());
+create policy ins on public.fac_documento_versiones for insert to authenticated with check (empresa_id = public.fac_mi_empresa() and public.fac_gestiona('documentos'));
 
-alter table fac_empresas enable row level security;
-drop policy if exists p_empresa on fac_empresas;
-create policy p_empresa on fac_empresas for all to authenticated using (id = fac_mi_empresa()) with check (id = fac_mi_empresa());
+-- Auditoría: cualquier usuario de la empresa registra; nadie modifica ni borra
+create policy sel on public.fac_auditoria for select to authenticated using (empresa_id = public.fac_mi_empresa());
+create policy ins on public.fac_auditoria for insert to authenticated with check (empresa_id = public.fac_mi_empresa());
 
-alter table fac_usuarios enable row level security;
-drop policy if exists p_empresa on fac_usuarios;
-create policy p_empresa on fac_usuarios for select to authenticated using (empresa_id = fac_mi_empresa());
+grant execute on function public.fac_guardar_lineas(text, text, jsonb) to authenticated;
 
-alter table fac_lineas enable row level security;
-drop policy if exists p_empresa on fac_lineas;
-create policy p_empresa on fac_lineas for all to authenticated
-  using (exists (select 1 from fac_cotizaciones c where c.id = cotizacion_id and c.empresa_id = fac_mi_empresa())
-      or exists (select 1 from fac_facturas f where f.id = factura_id and f.empresa_id = fac_mi_empresa()))
-  with check (exists (select 1 from fac_cotizaciones c where c.id = cotizacion_id and c.empresa_id = fac_mi_empresa())
-      or exists (select 1 from fac_facturas f where f.id = factura_id and f.empresa_id = fac_mi_empresa()));
+-- ---------- Storage: bucket privado por empresa ----------
+insert into storage.buckets (id, name, public, file_size_limit)
+values ('fac-documentos', 'fac-documentos', false, 10485760)
+on conflict (id) do update set public = false, file_size_limit = 10485760;
 
-alter table fac_plantilla_versiones enable row level security;
-drop policy if exists p_leer on fac_plantilla_versiones;
-drop policy if exists p_insertar on fac_plantilla_versiones;
-create policy p_leer on fac_plantilla_versiones for select to authenticated
-  using (exists (select 1 from fac_plantillas p where p.id = plantilla_id and p.empresa_id = fac_mi_empresa()));
-create policy p_insertar on fac_plantilla_versiones for insert to authenticated
-  with check (exists (select 1 from fac_plantillas p where p.id = plantilla_id and p.empresa_id = fac_mi_empresa()));
--- sin políticas de UPDATE/DELETE → las versiones no se pueden modificar
+create policy fac_docs_select on storage.objects for select to authenticated
+  using (bucket_id = 'fac-documentos' and (storage.foldername(name))[1] = public.fac_mi_empresa()::text);
+create policy fac_docs_insert on storage.objects for insert to authenticated
+  with check (bucket_id = 'fac-documentos' and (storage.foldername(name))[1] = public.fac_mi_empresa()::text and public.fac_gestiona('documentos'));
+create policy fac_docs_delete on storage.objects for delete to authenticated
+  using (bucket_id = 'fac-documentos' and (storage.foldername(name))[1] = public.fac_mi_empresa()::text and public.fac_gestiona('documentos'));
 
-alter table fac_documento_versiones enable row level security;
-drop policy if exists p_empresa on fac_documento_versiones;
-create policy p_empresa on fac_documento_versiones for all to authenticated
-  using (exists (select 1 from fac_documentos d where d.id = documento_id and d.empresa_id = fac_mi_empresa()))
-  with check (exists (select 1 from fac_documentos d where d.id = documento_id and d.empresa_id = fac_mi_empresa()));
-
-alter table fac_auditoria enable row level security;
-drop policy if exists p_leer on fac_auditoria;
-create policy p_leer on fac_auditoria for select to authenticated using (empresa_id = fac_mi_empresa());
--- sin políticas de escritura: solo el trigger (security definer) inserta; nadie edita ni borra
-
-alter table fac_consecutivos enable row level security;  -- solo vía fac_siguiente_numero()
+-- ---------- Permisos de ejecución de funciones ----------
+-- La de numeración solo la usan los triggers; las de seguridad, las políticas RLS.
+revoke execute on function public.fac_asignar_numero() from public, anon, authenticated;
+revoke execute on function public.fac_mi_empresa() from public, anon;
+revoke execute on function public.fac_permiso(text) from public, anon;
+revoke execute on function public.fac_gestiona(text[]) from public, anon;
+revoke execute on function public.fac_guardar_lineas(text, text, jsonb) from public, anon;
+grant execute on function public.fac_mi_empresa() to authenticated;
+grant execute on function public.fac_permiso(text) to authenticated;
+grant execute on function public.fac_gestiona(text[]) to authenticated;
+grant execute on function public.fac_guardar_lineas(text, text, jsonb) to authenticated;

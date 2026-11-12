@@ -46,23 +46,24 @@ Los nombres internos del código, las rutas (`#/cotizaciones`, `#/abonos`), las 
 
 ## Estado actual
 
-- **Prototipo funcional:** los datos se guardan en el navegador (`localStorage`) e incluye datos de ejemplo. Los adjuntos tienen un límite de 2 MB por archivo, por el límite de almacenamiento del navegador.
+- **Datos en Supabase** (proyecto `ekjcdmxtzcpkbexilzrf`): inicio de sesión real con Supabase Auth, datos compartidos entre todos los usuarios de la empresa y permisos por rol aplicados también en la base de datos (RLS).
+- **Primer arranque:** si la base de datos está vacía, la app muestra *Configuración inicial* para crear la empresa y el administrador. Después, en *Configuración* se pueden cargar datos de ejemplo, importar un respaldo JSON o pasar al servidor los datos que la versión anterior guardó en el navegador.
+- **Usuarios:** se crean desde *Usuarios y permisos* con correo y contraseña inicial (función `zewa-usuarios`). Cada usuario cambia su contraseña desde su nombre, arriba a la derecha.
+- **Adjuntos:** se guardan en el bucket privado `fac-documentos` (máx. 10 MB por archivo).
+- **Estilo Zewá:** presupuestos, facturas y recibos usan el membrete de *Plantilla Zewa.docx* (logo, correo y filete dorado; azul marino `#283d6a` y dorado `#c19c73`). En *Plantillas → Diseño → Estilo del documento* se puede volver al estilo clásico. `plantillas/presupuesto-membrete-zewa.docx` es la misma plantilla en Word con variables.
 - **PDF:** usa la impresión del navegador (A4, "Guardar como PDF").
 - **Envío por correo:** abre el cliente de correo con el mensaje listo (`mailto:`); el PDF se adjunta a mano.
 - **Firma digital:** firma manuscrita en pantalla, con fecha, hora y usuario registrados en la auditoría. No es una firma digital certificada.
 - **Verifactu / TicketBAI:** no incluido. Para cumplir el reglamento de sistemas de facturación de la AEAT (o TicketBAI en el País Vasco) hay que integrar un proveedor o módulo homologado (registro encadenado, QR y envío a la Agencia Tributaria).
 
-## Pasar a producción (Supabase)
+## Arquitectura de datos
 
-`supabase_facturacion.sql` contiene el esquema para varias empresas:
+- `assets/nube.js`: conexión con Supabase. Carga todas las tablas al entrar y, en cada guardado, envía solo lo que cambió (altas, cambios y bajas) en orden de dependencias. Las líneas van a `fac_lineas` mediante `fac_guardar_lineas` (una transacción por documento). Al volver a la pestaña recarga los cambios de otros usuarios si no estás editando.
+- `supabase_facturacion.sql`: esquema completo (tablas `fac_*`, RLS por empresa y módulo, numeración sin duplicados, vistas `fac_v_facturas` y `fac_v_proyectos`, bucket de Storage).
+- `supabase/functions/zewa-usuarios`: función de servidor para la configuración inicial, el alta de usuarios y el cambio de contraseña o correo de acceso.
+- Numeración: la app propone el siguiente número y el servidor lo confirma; si otro usuario lo usó a la vez, asigna el siguiente libre y la app lo corrige y avisa.
 
-- tablas de clientes, presupuestos (`fac_cotizaciones`), facturas, líneas, cobros (`fac_abonos`), plantillas, documentos y auditoría;
-- consecutivos sin huecos por empresa, tipo y año (`fac_siguiente_numero`);
-- versiones de plantilla inmutables (sin políticas de UPDATE ni DELETE);
-- un trigger que traslada los anticipos a la factura al facturar un presupuesto;
-- vistas `fac_v_facturas` (saldo y estado de pago) y `fac_v_proyectos` (control financiero);
-- auditoría automática por trigger en todas las tablas, de solo inserción;
-- RLS por empresa en todas las tablas;
-- Storage: bucket privado `fac-documentos`, organizado como `{empresa}/{cliente}/{proyecto}/...`.
+## Ajustes recomendados en el panel de Supabase
 
-El siguiente paso es cambiar `Store` en `assets/data.js` por llamadas a `supabase-js`.
+1. *Authentication → Sign In / Providers*: desactiva "Allow new users to sign up" (las altas se hacen desde la app).
+2. *Authentication → URL Configuration*: pon como *Site URL* la dirección donde publiques la app, para que funcione el enlace de "¿Olvidaste tu contraseña?".
