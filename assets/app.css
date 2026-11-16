@@ -214,6 +214,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 .empty svg { width: 36px; height: 36px; opacity: .5; margin-bottom: 8px; }
 
 /* ---------- Forms ---------- */
+[hidden] { display: none !important; }
 .form-grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 14px 16px; }
 .f { grid-column: span 4; display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .f.s2 { grid-column: span 2; } .f.s3 { grid-column: span 3; } .f.s6 { grid-column: span 6; } .f.s8 { grid-column: span 8; } .f.s12 { grid-column: 1 / -1; }

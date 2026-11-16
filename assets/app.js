@@ -1045,7 +1045,8 @@ const cargarPdfLib = () => (pdfLibPromise ||= new Promise((res, rej) => {
   s.onerror = () => { pdfLibPromise = null; rej(new Error('No se pudo cargar el generador de PDF. Revisa la conexión a internet.')); };
   document.head.appendChild(s);
 }));
-async function descargarPDF(tipo, d) {
+/* Genera el PDF en el navegador. Por defecto lo descarga; con { blob: true } devuelve el archivo (para compartir) */
+async function descargarPDF(tipo, d, { blob = false } = {}) {
   toast('Generando el PDF…');
   let cont;
   try {
@@ -1103,10 +1104,12 @@ async function descargarPDF(tipo, d) {
       pdf.setFont('helvetica', 'normal'); pdf.setFontSize(7.5); pdf.setTextColor(122, 130, 150);
       pdf.text(`Página ${i} de ${n}`, W - mx, 290, { align: 'right' });
     }
+    if (blob) return { archivo: new File([pdf.output('blob')], nombre, { type: 'application/pdf' }), nombre };
     pdf.save(nombre);
     toast('PDF descargado: ' + nombre);
   } catch (e) {
     console.error(e); toast('No se pudo generar el PDF: ' + e.message, 'bad');
+    if (blob) return null;
   } finally { cont?.remove(); }
 }
 async function printDoc(tipo, d) {
@@ -1133,24 +1136,89 @@ async function printDoc(tipo, d) {
   const fire = async () => { await esperarCarga(fr.contentDocument); setTimeout(() => { fr.contentWindow.focus(); fr.contentWindow.print(); }, 150); };
   if (fr.contentDocument.readyState === 'complete') fire(); else fr.addEventListener('load', fire, { once: true });
 }
+/* Teléfono para WhatsApp (wa.me): solo dígitos con prefijo de país; 9 dígitos españoles → 34 */
+function telWhatsApp(t) {
+  let n = String(t || '').trim();
+  const intl = n.startsWith('+') || n.startsWith('00');
+  n = n.replace(/\D/g, '').replace(/^00/, '');
+  if (!n) return '';
+  if (!intl && n.length === 9 && /^[6789]/.test(n)) n = '34' + n;
+  return n;
+}
+/* Enviar un documento por correo (mailto) o por WhatsApp (wa.me / compartir el PDF en el móvil) */
 function sendMail(tipo, d) {
   const cli = getCliente(d.clienteId) || {};
   const titulo = { cotizacion: 'Presupuesto', factura: 'Factura', abono: 'Recibo de pago' }[tipo];
+  const ent = { cotizacion: 'Presupuesto', factura: 'Factura', abono: 'Cobro' }[tipo];
   const total = tipo === 'abono' ? d.valor : docTotals(d.items).total;
-  modal({
+  const saludo = cli.contacto || cli.razonSocial || '';
+  const doc = `${tipo === 'factura' ? 'la' : 'el'} ${titulo.toLowerCase()} ${d.numero}${d.proyecto ? ` del proyecto "${d.proyecto}"` : ''} por importe de ${fmtMoney(total)}`;
+  const firma = `${Store.user().nombre}\n${DB.empresa.razonSocial}`;
+  const txtMail = `Hola ${saludo},\n\nLe adjuntamos ${doc}.\n\nQuedamos a su disposición para cualquier consulta.\n\nUn saludo,\n${firma}`;
+  const txtWa = `Hola ${saludo}, le enviamos ${doc}.\n\nQuedamos a su disposición para cualquier consulta.\n\nUn saludo,\n${firma}`;
+  const movil = esMovil() && typeof navigator.canShare === 'function';
+  const marcarEnviado = (detalle) => {
+    if (tipo === 'cotizacion' && d.estado === 'Borrador') d.estado = 'Enviado';
+    audit('Enviar', ent, d.numero, detalle); persist(); setTimeout(route, 300);
+  };
+  const { el: ov, close } = modal({
     title: `Enviar ${titulo} ${d.numero}`, okText: 'Abrir en correo',
-    body: `<div class="form-grid"><div class="f s12"><label>Para</label><input class="in" name="to" value="${esc(cli.email || '')}"></div>
-      <div class="f s12"><label>Asunto</label><input class="in" name="sub" value="${esc(`${titulo} ${d.numero} - ${DB.empresa.razonSocial}`)}"></div>
-      <div class="f s12"><label>Mensaje</label><textarea class="in" name="msg" rows="7">${esc(`Hola ${cli.contacto || cli.razonSocial || ''},\n\nLe adjuntamos ${tipo === 'factura' ? 'la' : 'el'} ${titulo.toLowerCase()} ${d.numero}${d.proyecto ? ` del proyecto "${d.proyecto}"` : ''} por importe de ${fmtMoney(total)}.\n\nQuedamos a su disposición para cualquier consulta.\n\nUn saludo,\n${Store.user().nombre}\n${DB.empresa.razonSocial}`)}</textarea></div>
-      <div class="f s12"><span class="hint">Se abrirá tu cliente de correo. Descarga el PDF con el botón "PDF" y adjúntalo al mensaje.</span></div></div>`,
-    onOk: (ov) => {
-      const to = $('[name=to]', ov).value, sub = $('[name=sub]', ov).value, msg = $('[name=msg]', ov).value;
-      window.location.href = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(sub)}&body=${encodeURIComponent(msg)}`;
-      if (tipo === 'cotizacion' && d.estado === 'Borrador') d.estado = 'Enviado';
-      audit('Enviar', { cotizacion: 'Presupuesto', factura: 'Factura', abono: 'Cobro' }[tipo], d.numero, 'Enviado a ' + to); persist(); setTimeout(route, 300);
+    body: `<div class="seg" role="tablist" style="display:flex;gap:6px;margin-bottom:14px">
+        <button type="button" class="btn sm primary" data-canal="mail">${ico('mail')}Correo</button>
+        <button type="button" class="btn sm" data-canal="wa">${ICO_WA}WhatsApp</button></div>
+      <div class="form-grid" data-panel="mail">
+        <div class="f s12"><label>Para</label><input class="in" name="to" value="${esc(cli.email || '')}"></div>
+        <div class="f s12"><label>Asunto</label><input class="in" name="sub" value="${esc(`${titulo} ${d.numero} - ${DB.empresa.razonSocial}`)}"></div>
+        <div class="f s12"><label>Mensaje</label><textarea class="in" name="msg" rows="7">${esc(txtMail)}</textarea></div>
+        <div class="f s12"><span class="hint">Se abrirá tu cliente de correo. Descarga el PDF con el botón "PDF" y adjúntalo al mensaje.</span></div></div>
+      <div class="form-grid" data-panel="wa" hidden>
+        <div class="f s12"><label>Teléfono móvil (WhatsApp)</label><input class="in" name="tel" inputmode="tel" value="${esc(cli.celular || cli.telefono || '')}" placeholder="Ej.: 612 345 678 o +34 612 345 678"></div>
+        <div class="f s12"><label>Mensaje</label><textarea class="in" name="wamsg" rows="7">${esc(txtWa)}</textarea></div>
+        ${movil ? `<div class="f s12"><button type="button" class="btn" id="waPdf" style="width:100%;justify-content:center">${ico('download')}Compartir el PDF (WhatsApp u otra app)</button>
+          <span class="hint">Genera el PDF y abre el menú de compartir del teléfono: elige WhatsApp y el contacto. El mensaje se envía junto al archivo.</span></div>` : ''}
+        <div class="f s12"><span class="hint">"Abrir WhatsApp" abre el chat con este número y el mensaje escrito${esMovil() ? '' : ' (WhatsApp Web o la aplicación de escritorio)'}. WhatsApp no permite adjuntar archivos desde un enlace: descarga el PDF y adjúntalo en el chat${movil ? ', o usa "Compartir el PDF"' : ''}.</span></div></div>`,
+    onOk: (o) => {
+      if (canal === 'mail') {
+        const to = $('[name=to]', o).value, sub = $('[name=sub]', o).value, msg = $('[name=msg]', o).value;
+        window.location.href = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(sub)}&body=${encodeURIComponent(msg)}`;
+        marcarEnviado('Enviado por correo a ' + to);
+        return;
+      }
+      const tel = telWhatsApp($('[name=tel]', o).value);
+      if (tel.length < 10) { $('[name=tel]', o).classList.add('invalid'); toast('Indica un móvil válido, con prefijo si no es de España (p. ej. +57…).', 'bad'); return false; }
+      window.open(`https://wa.me/${tel}?text=${encodeURIComponent($('[name=wamsg]', o).value)}`, '_blank', 'noopener');
+      marcarEnviado('Enviado por WhatsApp a +' + tel);
     },
   });
+  let canal = 'mail';
+  const okBtn = $('[data-ok]', ov);
+  ov.querySelectorAll('[data-canal]').forEach((b) => b.addEventListener('click', () => {
+    canal = b.dataset.canal;
+    ov.querySelectorAll('[data-canal]').forEach((x) => x.classList.toggle('primary', x === b));
+    ov.querySelectorAll('[data-panel]').forEach((p) => { p.hidden = p.dataset.panel !== canal; });
+    okBtn.textContent = canal === 'mail' ? 'Abrir en correo' : 'Abrir WhatsApp';
+  }));
+  // Móvil: compartir el archivo PDF con el menú del sistema (WhatsApp, Telegram, Gmail…)
+  $('#waPdf', ov)?.addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    if (btn.dataset.listo) return;
+    btn.disabled = true; btn.innerHTML = 'Generando el PDF…';
+    const r = await descargarPDF(tipo, d, { blob: true });
+    btn.disabled = false;
+    if (!r) { btn.innerHTML = `${ico('download')}Compartir el PDF (WhatsApp u otra app)`; return; }
+    if (!navigator.canShare({ files: [r.archivo] })) { btn.innerHTML = 'Este teléfono no permite compartir archivos'; btn.disabled = true; return; }
+    // compartir necesita un toque reciente del usuario: el PDF ya está listo, se pide un segundo toque
+    btn.dataset.listo = '1'; btn.classList.add('primary'); btn.innerHTML = `${ICO_WA}Compartir ${esc(r.nombre)}`;
+    btn.onclick = async () => {
+      try {
+        await navigator.share({ files: [r.archivo], title: `${titulo} ${d.numero}`, text: $('[name=wamsg]', ov).value });
+        marcarEnviado('PDF compartido desde el móvil (WhatsApp u otra app)'); close();
+      } catch (err) { if (err.name !== 'AbortError') toast('No se pudo compartir: ' + err.message, 'bad'); }
+    };
+  });
 }
+/* Logotipo de WhatsApp (trazo), mismo tamaño que los iconos de la app */
+const ICO_WA = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 20.5l1.3-4.2A8.5 8.5 0 1 1 8 19.3z"/><path d="M9 8.6c0 3.3 3 6.4 6.4 6.4l1.1-1.4-1.9-1-0.9.8c-1-.4-2-1.4-2.4-2.4l.8-.9-1-1.9z"/></svg>';
 function signDialog(tipo, d) {
   const cli = getCliente(d.clienteId) || {};
   modal({
