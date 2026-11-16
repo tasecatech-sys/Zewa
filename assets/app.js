@@ -963,6 +963,7 @@ function sanitizeHTML(html) {
 function buildPrintHTML(title, bodyHTML, isWord) {
   const css = new URL('assets/app.css', location.href).href;
   return `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>${esc(title)}</title>
+    <base href="${esc(location.href.split('#')[0])}"><meta name="viewport" content="width=820">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Montserrat:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="${css}">
     <style>
@@ -1001,17 +1002,50 @@ function buildPrintHTML(title, bodyHTML, isWord) {
       #print-area .doc .d-pagina2::before { display: none !important; }
     </style></head><body><div id="print-area">${bodyHTML}</div></body></html>`;
 }
+/* En móviles (iPhone, iPad, Android) los navegadores no imprimen desde un iframe oculto:
+   allí el documento se abre en una pestaña propia con un botón para imprimir / guardar en PDF. */
+const esMovil = () => /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+async function esperarCarga(doc) {
+  try {
+    await Promise.race([Promise.all([
+      doc.fonts?.ready,
+      ...[...doc.images].map((im) => (im.complete ? null : new Promise((r) => { im.onload = im.onerror = r; }))),
+    ]), new Promise((r) => setTimeout(r, 3000))]);
+  } catch (e) { /* imprimir igualmente */ }
+}
 async function printDoc(tipo, d) {
+  // La pestaña se abre ya, dentro del clic, para que el navegador del móvil no la bloquee
+  const win = esMovil() ? window.open('', '_blank') : null;
+  if (esMovil() && !win) return toast('El navegador bloqueó la ventana del PDF: permite las ventanas emergentes para esta página.', 'bad');
+  if (win) win.document.write('<p style="font:16px system-ui,sans-serif;padding:24px;color:#283d6a">Preparando el PDF…</p>');
   const area = $('#print-area');
   area.innerHTML = renderDoc(tipo, d);
   const slot = $('.docx-slot', area);
   if (slot) {
     toast('Preparando PDF desde la plantilla Word…');
     try { await renderWordInto(slot, plantillaConfig(d.plantilla), tipo, d); }
-    catch (e) { return toast(e.message, 'bad'); }
+    catch (e) { win?.close(); return toast(e.message, 'bad'); }
   }
-  const html = buildPrintHTML(`${d.numero} - ${clienteNombre(d.clienteId)}`, area.innerHTML, !!slot);
+  const titulo = `${d.numero} - ${clienteNombre(d.clienteId)}`;
+  const html = buildPrintHTML(titulo, area.innerHTML, !!slot);
   area.innerHTML = '';
+  if (win) {
+    const barra = `<div class="zw-barra"><button onclick="window.print()">Imprimir / Guardar PDF</button><button class="sec" onclick="window.close()">Cerrar</button></div>
+      <style>
+        .zw-barra { position: sticky; top: 0; z-index: 9; display: flex; gap: 10px; justify-content: center; padding: 12px; background: #283d6a; box-shadow: 0 2px 8px rgba(0,0,0,.2); }
+        .zw-barra button { font: 600 17px system-ui, sans-serif; padding: 12px 20px; border-radius: 10px; border: 0; background: #c19c73; color: #fff; }
+        .zw-barra button.sec { background: transparent; border: 1px solid rgba(255,255,255,.6); }
+        @media screen { #print-area { padding: 16px 0; } #print-area .doc { box-shadow: 0 4px 20px rgba(0,0,0,.15) !important; margin: 0 auto !important; padding: 34px 40px !important; width: 794px !important; } }
+        @media print { .zw-barra { display: none !important; } }
+      </style>`;
+    // Página propia (blob) que se imprime sola al terminar de cargar estilos, logo y tipografía
+    const auto = `<script>window.addEventListener('load', function () { var go = function () { setTimeout(function () { window.print(); }, 300); };
+      if (document.fonts && document.fonts.ready) document.fonts.ready.then(go, go); else go(); });<\/script>`;
+    const url = URL.createObjectURL(new Blob([html.replace('<body>', '<body>' + barra).replace('</body>', auto + '</body>')], { type: 'text/html' }));
+    win.location.replace(url);
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    return;
+  }
   $('#print-frame')?.remove();
   const fr = document.createElement('iframe');
   fr.id = 'print-frame';
@@ -1020,16 +1054,7 @@ async function printDoc(tipo, d) {
   document.body.appendChild(fr);
   fr.contentDocument.open(); fr.contentDocument.write(html); fr.contentDocument.close();
   // Esperar a que carguen la hoja de estilos, la tipografía y las imágenes (logo) antes de imprimir
-  const fire = async () => {
-    const doc = fr.contentDocument;
-    try {
-      await Promise.race([Promise.all([
-        doc.fonts?.ready,
-        ...[...doc.images].map((im) => (im.complete ? null : new Promise((r) => { im.onload = im.onerror = r; }))),
-      ]), new Promise((r) => setTimeout(r, 3000))]);
-    } catch (e) { /* imprimir igualmente */ }
-    setTimeout(() => { fr.contentWindow.focus(); fr.contentWindow.print(); }, 150);
-  };
+  const fire = async () => { await esperarCarga(fr.contentDocument); setTimeout(() => { fr.contentWindow.focus(); fr.contentWindow.print(); }, 150); };
   if (fr.contentDocument.readyState === 'complete') fire(); else fr.addEventListener('load', fire, { once: true });
 }
 function sendMail(tipo, d) {
