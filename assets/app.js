@@ -711,6 +711,7 @@ function docActions(tipo, d) {
 function bindDocActions(tipo, d) {
   const isCot = tipo === 'cotizacion', ent = { cotizacion: 'Presupuesto', factura: 'Factura', abono: 'Cobro' }[tipo];
   const modulo = { cotizacion: 'cotizaciones', factura: 'facturas', abono: 'abonos' }[tipo];
+  cargarEnlaces(tipo, d).catch(() => {});
   view.onclick = async (e) => {
     const b = e.target.closest('[data-act]'); if (!b) return;
     const act = b.dataset.act;
@@ -748,6 +749,33 @@ async function convertToInvoice(c) {
   persist(); toast(`Factura ${f.numero} emitida`); go('/facturas/' + f.id);
 }
 function docPreview(tipo, d) { return `<div class="preview-frame"><div id="docRender">${renderDoc(tipo, d)}</div></div>`; }
+/* Enlaces de PDF enviados por correo/WhatsApp para un documento: estado, descargas y anulación */
+async function cargarEnlaces(tipo, d) {
+  const el = $('.enlaces-pdf'); if (!el) return;
+  const { data, error } = await Nube.sb.from('fac_enlaces').select('*').eq('documento_id', d.id).order('creado', { ascending: false });
+  if (!document.body.contains(el)) return;
+  if (error || !data?.length) { el.remove(); return; }
+  const puede = puedeGestionar({ cotizacion: 'cotizaciones', factura: 'facturas', abono: 'abonos' }[tipo]);
+  const ahora = new Date();
+  el.innerHTML = `<h4 style="font-size:13px;margin:0 0 8px">Enlaces de descarga enviados</h4><div class="tbl-wrap"><table class="mini-tbl enl-tbl"><thead><tr><th>Enviado</th><th>Por</th><th>Caduca</th><th class="num">Descargas</th><th>Estado</th><th></th></tr></thead><tbody>${data.map((e) => {
+    const st = e.revocado ? ['Anulado', 'b-muted'] : new Date(e.expira) < ahora ? ['Caducado', 'b-muted'] : ['Activo', 'b-ok'];
+    const url = `${location.origin}/d/${e.codigo}`;
+    return `<tr><td>${fmtDateTime(e.creado)}</td><td>${esc(e.creado_por || '')}</td><td>${fmtDate(String(e.expira).slice(0, 10))}</td>
+      <td class="num">${e.descargas}${e.ultima_descarga ? `<small class="muted" style="display:block">última ${fmtDateTime(e.ultima_descarga)}</small>` : ''}</td>
+      <td><span class="badge ${st[1]}">${st[0]}</span></td>
+      <td style="white-space:nowrap">${st[0] === 'Activo' ? `<button class="btn sm ghost" data-copiar="${esc(url)}">Copiar</button>${puede ? `<button class="btn sm ghost danger" data-anular="${e.codigo}">Anular</button>` : ''}` : ''}</td></tr>`;
+  }).join('')}</tbody></table></div><p class="hint" style="margin:6px 0 18px">Anula un enlace si lo enviaste por error o el documento ha cambiado: dejará de funcionar al instante.</p>`;
+  el.onclick = async (ev) => {
+    const cp = ev.target.closest('[data-copiar]');
+    if (cp) { try { await navigator.clipboard.writeText(cp.dataset.copiar); toast('Enlace copiado'); } catch (x) { toast(cp.dataset.copiar); } return; }
+    const an = ev.target.closest('[data-anular]'); if (!an) return;
+    if (!(await confirmBox('Anular enlace', 'El enlace dejará de funcionar y quien lo tenga ya no podrá descargar el PDF. ¿Continuar?', 'Anular enlace'))) return;
+    const { error: e2 } = await Nube.sb.from('fac_enlaces').update({ revocado: true }).eq('codigo', an.dataset.anular);
+    if (e2) return toast('No se pudo anular: ' + e2.message, 'bad');
+    audit('Anular', { cotizacion: 'Presupuesto', factura: 'Factura', abono: 'Cobro' }[tipo], d.numero, 'Enlace de descarga del PDF anulado'); persist();
+    toast('Enlace anulado'); cargarEnlaces(tipo, d);
+  };
+}
 function historyFor(ref) { const it = DB.auditoria.filter((a) => a.ref === ref); return `<ul class="timeline">${it.map(auditItem).join('') || emptyState('Sin registros')}</ul>`; }
 function finPanel(c) {
   const r = proyectoResumen(c);
@@ -763,7 +791,7 @@ function CotDetalle(id, tab = 'doc') {
     `${c.facturaId ? `<div class="card card-pad" style="margin-bottom:16px;display:flex;gap:10px;align-items:center;border-color:var(--info)">${ico('invoice')}<span>Convertido en factura <a href="#/facturas/${c.facturaId}"><b>${getFac(c.facturaId)?.numero}</b></a> (${facturaEstado(getFac(c.facturaId))})</span></div>` : ''}
     ${puedeGestionar('cotizaciones') && ['Borrador', 'Enviado'].includes(c.estado) ? `<div class="card card-pad" style="margin-bottom:16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span style="color:var(--text-2)">Cambiar estado:</span>${['Borrador', 'Enviado', 'Aprobado'].filter((x) => x !== c.estado).map((x) => `<button class="btn sm" data-act="estado" data-val="${x}">Marcar como ${x}</button>`).join('')}</div>` : ''}
     <div class="card"><div class="tabs">${[['doc', 'Documento'], ['fin', 'Control financiero'], ['hist', 'Historial']].map(([k, l]) => `<button class="${tab === k ? 'on' : ''}" onclick="go('/cotizaciones/${id}?tab=${k}')">${l}</button>`).join('')}</div>
-    ${tab === 'doc' ? docPreview('cotizacion', c) : tab === 'fin' ? finPanel(c) : `<div class="card-pad">${historyFor(c.numero)}</div>`}</div>`;
+    ${tab === 'doc' ? docPreview('cotizacion', c) : tab === 'fin' ? finPanel(c) : `<div class="card-pad"><div class="enlaces-pdf"></div>${historyFor(c.numero)}</div>`}</div>`;
   bindDocActions('cotizacion', c);
 }
 
@@ -886,7 +914,7 @@ function AbonoDetalle(id) {
     `<a href="#/abonos">Cobros</a> / ${a.numero}`) +
     `<div class="grid g-main"><div class="card">${docPreview('abono', a)}</div><div class="grid" style="align-content:start">
       <div class="card card-pad"><div class="kv" style="grid-template-columns:1fr 1fr">${[['Presupuesto', getCot(a.cotizacionId) ? `<a href="#/cotizaciones/${a.cotizacionId}">${getCot(a.cotizacionId).numero}</a>` : '—'], ['Factura', getFac(a.facturaId) ? `<a href="#/facturas/${a.facturaId}">${getFac(a.facturaId).numero}</a>` : '—'], ['Forma de pago', esc(a.formaPago)], ['Banco', esc(a.banco)], ['Referencia', esc(a.referencia || '—')], ['Registrado por', esc(a.creadoPor)]].map(([k, v]) => `<div><small>${k}</small><span>${v}</span></div>`).join('')}</div></div>
-      <div class="card"><div class="card-head"><h3>Historial</h3></div><div class="card-pad">${historyFor(a.numero)}</div></div></div></div>`;
+      <div class="card"><div class="card-head"><h3>Historial</h3></div><div class="card-pad"><div class="enlaces-pdf"></div>${historyFor(a.numero)}</div></div></div></div>`;
   bindDocActions('abono', a);
   $('#anular')?.addEventListener('click', async () => {
     if (!(await confirmBox('Anular cobro', `El cobro ${a.numero} por ${fmtMoney(a.valor)} dejará de sumar al saldo del proyecto.`, 'Anular'))) return;
@@ -927,7 +955,7 @@ function FacDetalle(id, tab = 'doc') {
   view.innerHTML = pageHead(`${f.numero} ${badge(facturaEstado(f))}`, `${esc(clienteNombre(f.clienteId))} · ${fmtMoney(r.total)}`, docActions('factura', f), `<a href="#/facturas">Facturación</a> / ${f.numero}`) +
     `<div class="grid g-kpi" style="margin-bottom:16px">${[['Total factura', fmtMoney(r.total)], ['Pagos a cuenta', fmtMoney(r.abonado)], ['Saldo pendiente', fmtMoney(r.saldo)], ['Vencimiento', fmtDate(f.vence)]].map(([l, v]) => `<div class="card kpi"><span class="lbl">${l}</span><span class="val">${v}</span></div>`).join('')}</div>
     <div class="card"><div class="tabs">${[['doc', 'Documento'], ['abonos', `Pagos a cuenta (${r.abonos.length})`], ['hist', 'Historial']].map(([k, l]) => `<button class="${tab === k ? 'on' : ''}" onclick="go('/facturas/${id}?tab=${k}')">${l}</button>`).join('')}</div>
-    ${tab === 'doc' ? docPreview('factura', f) : tab === 'abonos' ? `<div id="abT"></div>` : `<div class="card-pad">${historyFor(f.numero)}</div>`}</div>`;
+    ${tab === 'doc' ? docPreview('factura', f) : tab === 'abonos' ? `<div id="abT"></div>` : `<div class="card-pad"><div class="enlaces-pdf"></div>${historyFor(f.numero)}</div>`}</div>`;
   if (tab === 'abonos') DataTable($('#abT'), { rows: () => r.abonos, searchText: (a) => a.numero + a.concepto, sort: 'fecha', columns: aboColumns(false), onRow: (a) => go('/abonos/' + a.id), footer: () => 'Total ' + fmtMoney(r.abonado), empty: 'Sin pagos a cuenta', tools: r.saldo > 0 && f.estado !== 'Anulada' ? `<a class="btn sm primary" href="#/abonos/nuevo?fac=${f.id}">${ico('plus')}Registrar pago</a>` : '' });
   bindDocActions('factura', f);
 }
@@ -1267,7 +1295,7 @@ function sendMail(tipo, d) {
     } else {
       pdf = r.archivo;
       try {
-        enlace = await Nube.subirEnvio(d.id, pdf, DIAS_ENLACE_PDF);
+        enlace = await Nube.subirEnvio(d, tipo, pdf, DIAS_ENLACE_PDF);
         ponerEnlace(`Puede descargar el PDF aquí:\n${enlace}`);
         estado('ok', `${ico('check')} PDF listo: <b>${esc(r.nombre)}</b>. El mensaje incluye un enlace de descarga válido ${DIAS_ENLACE_PDF} días.`);
       } catch (e) {

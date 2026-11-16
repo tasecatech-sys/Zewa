@@ -524,3 +524,29 @@ create policy fac_envios_update on storage.objects for update to authenticated
     and (storage.foldername(name))[2] = 'envios' and public.fac_gestiona('cotizaciones', 'facturas', 'abonos'))
   with check (bucket_id = 'fac-documentos' and (storage.foldername(name))[1] = public.fac_mi_empresa()::text
     and (storage.foldername(name))[2] = 'envios');
+
+-- ---------- Enlaces cortos a PDF enviados ----------
+-- https://<app>/d/<codigo> → (rewrite de Vercel) → función zewa-pdf?c=<codigo>, que entrega el archivo.
+create table public.fac_enlaces (
+  codigo text primary key check (codigo ~ '^[A-Za-z0-9]{10,32}$'),
+  empresa_id uuid not null references public.fac_empresas on delete cascade,
+  documento_id text not null,
+  tipo text not null check (tipo in ('cotizacion', 'factura', 'abono')),
+  numero text,
+  storage_path text not null,
+  nombre_archivo text not null,
+  expira timestamptz not null,
+  revocado boolean not null default false,
+  descargas integer not null default 0,
+  ultima_descarga timestamptz,
+  creado timestamptz not null default now(),
+  creado_por text
+);
+create index on public.fac_enlaces (empresa_id, documento_id);
+alter table public.fac_enlaces enable row level security;
+create policy sel on public.fac_enlaces for select to authenticated using (empresa_id = public.fac_mi_empresa());
+create policy ins on public.fac_enlaces for insert to authenticated
+  with check (empresa_id = public.fac_mi_empresa() and public.fac_gestiona('cotizaciones', 'facturas', 'abonos'));
+create policy upd on public.fac_enlaces for update to authenticated
+  using (empresa_id = public.fac_mi_empresa() and public.fac_gestiona('cotizaciones', 'facturas', 'abonos'))
+  with check (empresa_id = public.fac_mi_empresa());
