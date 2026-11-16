@@ -957,6 +957,19 @@ function sanitizeHTML(html) {
   tpl.content.querySelectorAll('*').forEach((n) => [...n.attributes].forEach((a) => { if (/^on/i.test(a.name) || /javascript:/i.test(a.value)) n.removeAttribute(a.name); }));
   return tpl.innerHTML;
 }
+/* Impresión: el membrete Zewá pasa a la cabecera de una tabla envolvente (thead), que el
+   navegador repite en cada hoja. Se quita el membrete propio de la 2.ª página para no duplicarlo. */
+function membreteRepetido(root) {
+  const doc = root.querySelector('.doc'); if (!doc) return;
+  const mem = doc.querySelector(':scope > .z-membrete'); if (!mem) return;
+  doc.querySelectorAll('.d-pagina2 > .z-membrete').forEach((n) => n.remove());
+  const t = document.createElement('table'); t.className = 'print-wrap';
+  t.innerHTML = '<thead><tr><td></td></tr></thead><tbody><tr><td></td></tr></tbody>';
+  t.tHead.rows[0].cells[0].appendChild(mem);
+  const cell = t.tBodies[0].rows[0].cells[0];
+  while (doc.firstChild) cell.appendChild(doc.firstChild);
+  doc.appendChild(t);
+}
 /* Estilos del documento en papel (impresión y PDF descargado); sc = contenedor */
 const cssDocImpreso = (sc) => `
       /* Imprimir los fondos (cabecera de tabla, franja del total, recuadros): sin esto el texto blanco desaparece */
@@ -985,6 +998,13 @@ const cssDocImpreso = (sc) => `
       ${sc} .doc thead { display: table-header-group; }
       ${sc} .doc .d-pagina2 { break-before: page; margin-top: 0 !important; padding-top: 0 !important; border-top: 0 !important; }
       ${sc} .doc .d-pagina2::before { display: none !important; }
+      ${sc} .doc table.print-wrap { width: 100%; border-collapse: collapse; margin: 0; }
+      ${sc} .doc table.print-wrap > thead { display: table-header-group; }
+      ${sc} .doc table.print-wrap > * > tr { break-inside: auto !important; }
+      ${sc} .doc table.print-wrap > * > tr > td { padding: 0 !important; border: 0 !important; background: none !important; }
+      ${sc} .doc table.print-wrap > thead > tr > td { padding-bottom: 6px !important; }
+      /* Dentro de la tabla envolvente, solo las descripciones de las partidas van en línea aparte */
+      ${sc} .doc table.print-wrap .d-cols small, ${sc} .doc table.print-wrap .d-sign small { display: inline; }
 `;
 /* Página aislada solo con el documento: sin fondo ni layout de la app.
    Plantilla Word: los márgenes los pone el propio .docx (Diseño > Márgenes), por eso @page va en 0.
@@ -996,7 +1016,8 @@ function buildPrintHTML(title, bodyHTML, isWord) {
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Montserrat:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="${css}">
     <style>
-      @page { size: A4; margin: ${isWord ? '0' : '16mm 14mm'}; }
+      @page { size: A4; margin: ${isWord ? '0' : '12mm 14mm 14mm'}; }
+      ${isWord ? '' : `@page { @bottom-right { content: "Página " counter(page) " de " counter(pages); font: 500 8.5px Montserrat, Arial, sans-serif; color: #7a8296; } }`}
       html, body { margin: 0 !important; padding: 0 !important; background: #fff !important; display: block !important; min-height: 0 !important; }
       #print-area { display: block !important; position: static !important; }
       #print-area .doc { box-shadow: none !important; width: auto !important; max-width: none !important; padding: 0 !important; margin: 0 !important; }
@@ -1048,15 +1069,41 @@ async function descargarPDF(tipo, d) {
     document.body.appendChild(cont);
     const slot = $('.docx-slot', cont);
     if (slot) await renderWordInto(slot, plantillaConfig(d.plantilla), tipo, d);
+    // El membrete se dibuja en cada hoja del PDF: se retira del contenido para no duplicarlo
+    const zewa = !slot && !!$('.doc.zewa', cont);
+    const memImg = zewa ? $('.doc > .z-membrete img', cont)?.getAttribute('src') : null;
+    const memMail = zewa ? ($('.doc > .z-membrete .z-contacto', cont)?.textContent || '').replace('|', '').trim() : '';
+    if (zewa) cont.querySelectorAll('.z-membrete').forEach((n) => n.remove());
     await esperarCarga(document);
     const nombre = `${d.numero} - ${clienteNombre(d.clienteId)}`.replace(/[\\/:*?"<>|]+/g, ' ').replace(/[.\s]+$/, '').trim() + '.pdf';
-    await html2pdf().set({
-      margin: [10, 0, 10, 0], filename: nombre,
+    const logo = memImg ? await new Promise((r) => { const im = new Image(); im.onload = () => r(im); im.onerror = () => r(null); im.src = memImg; }) : null;
+    const worker = html2pdf().set({
+      margin: [zewa ? 30 : 12, 0, 14, 0], filename: nombre,
       image: { type: 'jpeg', quality: 0.95 },
       html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', scrollX: 0, scrollY: 0 },
       jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
       pagebreak: { mode: ['css', 'legacy'], before: '.d-pagina2, .docx-wrapper > section.docx + section.docx', avoid: ['tr', '.d-totals', '.d-sign', '.z-membrete', '.d-head', '.d-block:not(:has(table))', '.d-condiciones li', '.d-condiciones p', '.d-condiciones h5'] },
-    }).from($('#pdf-export', cont)).save();
+    }).from($('#pdf-export', cont)).toPdf();
+    const pdf = await worker.get('pdf');
+    const n = pdf.internal.getNumberOfPages(), W = 210, mx = 9.5;
+    for (let i = 1; i <= n; i++) {
+      pdf.setPage(i);
+      if (zewa) {
+        if (logo) { const h = 13.5, w = h * logo.naturalWidth / logo.naturalHeight; pdf.addImage(logo, 'PNG', mx, 9, w, h); }
+        if (memMail) {
+          pdf.setFont('helvetica', 'normal'); pdf.setFontSize(9); pdf.setTextColor(40, 61, 106);
+          const tw = pdf.getTextWidth(memMail); pdf.text(memMail, W - mx, 21, { align: 'right' });
+          const ex = W - mx - tw - 9; // sobre ✉ dibujado
+          pdf.setFillColor(40, 61, 106); pdf.rect(ex, 18.6, 4.2, 2.9, 'F');
+          pdf.setDrawColor(255, 255, 255); pdf.setLineWidth(0.25); pdf.line(ex + 0.2, 18.8, ex + 2.1, 20.3); pdf.line(ex + 2.1, 20.3, ex + 4, 18.8);
+          pdf.setDrawColor(40, 61, 106); pdf.setLineWidth(0.2); pdf.line(ex + 6.2, 18.3, ex + 6.2, 21.6);
+        }
+        pdf.setDrawColor(184, 164, 143); pdf.setLineWidth(0.4); pdf.line(mx, 25, W - mx, 25);
+      }
+      pdf.setFont('helvetica', 'normal'); pdf.setFontSize(7.5); pdf.setTextColor(122, 130, 150);
+      pdf.text(`Página ${i} de ${n}`, W - mx, 290, { align: 'right' });
+    }
+    pdf.save(nombre);
     toast('PDF descargado: ' + nombre);
   } catch (e) {
     console.error(e); toast('No se pudo generar el PDF: ' + e.message, 'bad');
@@ -1072,6 +1119,7 @@ async function printDoc(tipo, d) {
     try { await renderWordInto(slot, plantillaConfig(d.plantilla), tipo, d); }
     catch (e) { return toast(e.message, 'bad'); }
   }
+  if (!slot) membreteRepetido(area);
   const html = buildPrintHTML(`${d.numero} - ${clienteNombre(d.clienteId)}`, area.innerHTML, !!slot);
   area.innerHTML = '';
   $('#print-frame')?.remove();
