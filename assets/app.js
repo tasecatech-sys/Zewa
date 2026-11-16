@@ -957,6 +957,35 @@ function sanitizeHTML(html) {
   tpl.content.querySelectorAll('*').forEach((n) => [...n.attributes].forEach((a) => { if (/^on/i.test(a.name) || /javascript:/i.test(a.value)) n.removeAttribute(a.name); }));
   return tpl.innerHTML;
 }
+/* Estilos del documento en papel (impresión y PDF descargado); sc = contenedor */
+const cssDocImpreso = (sc) => `
+      /* Imprimir los fondos (cabecera de tabla, franja del total, recuadros): sin esto el texto blanco desaparece */
+      *, *::before, *::after { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+      /* Más compacto en papel para que un presupuesto normal quepa en una hoja y las condiciones vayan en la segunda */
+      ${sc} .doc { font-size: 11px; line-height: 1.42; }
+      ${sc} .doc .z-membrete { padding-bottom: 8px; }
+      ${sc} .doc .z-membrete img { height: 52px; }
+      ${sc} .doc .d-head { margin-top: 12px; }
+      ${sc} .doc .d-title h2 { font-size: 21px; }
+      ${sc} .doc .d-block { margin-top: 12px; }
+      ${sc} .doc .d-block:has(> .d-cols) { padding: 7px 12px; }
+      ${sc} .doc .d-cols { gap: 3px 20px; }
+      ${sc} .doc th { padding: 6px 8px; }
+      ${sc} .doc td { padding: 5px 8px; }
+      ${sc} .doc .d-totals { margin-top: 6px; }
+      ${sc} .doc .d-totals div { padding: 3px 8px; }
+      ${sc} .doc .d-totals .g { padding: 6px 10px; }
+      ${sc} .doc .d-sign { margin-top: 20px; }
+      ${sc} .doc .d-sign > div > div[style*="height:64px"] { height: 40px !important; }
+      ${sc} .doc .d-foot { margin-top: 14px; padding-top: 8px; font-size: 10px; }
+      ${sc} .doc .d-condiciones { font-size: 10.5px; line-height: 1.5; margin-top: 12px; }
+      ${sc} .doc tr, ${sc} .doc .d-totals, ${sc} .doc .d-sign, ${sc} .doc .z-membrete, ${sc} .doc .d-head { break-inside: avoid; }
+      ${sc} .doc .d-block:not(:has(table)), ${sc} .doc .d-condiciones li, ${sc} .doc .d-condiciones p { break-inside: avoid; }
+      ${sc} .doc h4, ${sc} .doc h5, ${sc} .doc thead { break-after: avoid; }
+      ${sc} .doc thead { display: table-header-group; }
+      ${sc} .doc .d-pagina2 { break-before: page; margin-top: 0 !important; padding-top: 0 !important; border-top: 0 !important; }
+      ${sc} .doc .d-pagina2::before { display: none !important; }
+`;
 /* Página aislada solo con el documento: sin fondo ni layout de la app.
    Plantilla Word: los márgenes los pone el propio .docx (Diseño > Márgenes), por eso @page va en 0.
    Diseñador del sistema: márgenes de página en cada hoja. */
@@ -974,36 +1003,11 @@ function buildPrintHTML(title, bodyHTML, isWord) {
       #print-area .docx-wrapper { background: none !important; padding: 0 !important; display: block !important; }
       #print-area .docx-wrapper > section.docx { box-shadow: none !important; margin: 0 !important; break-after: page; }
       #print-area .docx-wrapper > section.docx:last-child { break-after: auto; }
-      /* Imprimir los fondos (cabecera de tabla, franja del total, recuadros): sin esto el texto blanco desaparece */
-      *, *::before, *::after { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
-      /* Más compacto en papel para que un presupuesto normal quepa en una hoja y las condiciones vayan en la segunda */
-      #print-area .doc { font-size: 11px; line-height: 1.42; }
-      #print-area .doc .z-membrete { padding-bottom: 8px; }
-      #print-area .doc .z-membrete img { height: 52px; }
-      #print-area .doc .d-head { margin-top: 12px; }
-      #print-area .doc .d-title h2 { font-size: 21px; }
-      #print-area .doc .d-block { margin-top: 12px; }
-      #print-area .doc .d-block:has(> .d-cols) { padding: 7px 12px; }
-      #print-area .doc .d-cols { gap: 3px 20px; }
-      #print-area .doc th { padding: 6px 8px; }
-      #print-area .doc td { padding: 5px 8px; }
-      #print-area .doc .d-totals { margin-top: 6px; }
-      #print-area .doc .d-totals div { padding: 3px 8px; }
-      #print-area .doc .d-totals .g { padding: 6px 10px; }
-      #print-area .doc .d-sign { margin-top: 20px; }
-      #print-area .doc .d-sign > div > div[style*="height:64px"] { height: 40px !important; }
-      #print-area .doc .d-foot { margin-top: 14px; padding-top: 8px; font-size: 10px; }
-      #print-area .doc .d-condiciones { font-size: 10.5px; line-height: 1.5; margin-top: 12px; }
-      #print-area .doc tr, #print-area .doc .d-totals, #print-area .doc .d-sign, #print-area .doc .z-membrete, #print-area .doc .d-head { break-inside: avoid; }
-      #print-area .doc .d-block:not(:has(table)), #print-area .doc .d-condiciones li, #print-area .doc .d-condiciones p { break-inside: avoid; }
-      #print-area .doc h4, #print-area .doc h5, #print-area .doc thead { break-after: avoid; }
-      #print-area .doc thead { display: table-header-group; }
-      #print-area .doc .d-pagina2 { break-before: page; margin-top: 0 !important; padding-top: 0 !important; border-top: 0 !important; }
-      #print-area .doc .d-pagina2::before { display: none !important; }
+      ${cssDocImpreso('#print-area')}
     </style></head><body><div id="print-area">${bodyHTML}</div></body></html>`;
 }
-/* En móviles (iPhone, iPad, Android) los navegadores no imprimen desde un iframe oculto:
-   allí el documento se abre en una pestaña propia con un botón para imprimir / guardar en PDF. */
+/* En móviles (iPhone, iPad, Android) imprimir desde el navegador no es fiable y no guarda en Descargas:
+   allí el botón PDF genera el archivo directamente (html2pdf) y lo descarga. En el PC se usa la impresión. */
 const esMovil = () => /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 async function esperarCarga(doc) {
   try {
@@ -1011,41 +1015,65 @@ async function esperarCarga(doc) {
       doc.fonts?.ready,
       ...[...doc.images].map((im) => (im.complete ? null : new Promise((r) => { im.onload = im.onerror = r; }))),
     ]), new Promise((r) => setTimeout(r, 3000))]);
-  } catch (e) { /* imprimir igualmente */ }
+  } catch (e) { /* seguir igualmente */ }
+}
+const PDF_LIB = 'https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.2/dist/html2pdf.bundle.min.js';
+let pdfLibPromise = null;
+const cargarPdfLib = () => (pdfLibPromise ||= new Promise((res, rej) => {
+  const s = document.createElement('script'); s.src = PDF_LIB; s.onload = res;
+  s.onerror = () => { pdfLibPromise = null; rej(new Error('No se pudo cargar el generador de PDF. Revisa la conexión a internet.')); };
+  document.head.appendChild(s);
+}));
+async function descargarPDF(tipo, d) {
+  toast('Generando el PDF…');
+  let cont;
+  try {
+    await cargarPdfLib();
+    // Contenedor fuera de la pantalla; el generador copia #pdf-export (con sus estilos dentro)
+    cont = document.createElement('div');
+    cont.setAttribute('aria-hidden', 'true');
+    cont.style.cssText = 'position:fixed;left:-12000px;top:0;width:794px;background:#fff;z-index:-1';
+    cont.innerHTML = `<div id="pdf-export" style="width:794px;background:#fff"><style>${cssDocImpreso('#pdf-export')}
+      #pdf-export, #pdf-export * { box-sizing: border-box; }
+      /* En el móvil la app reorganiza el documento para pantallas estrechas: en el PDF siempre maqueta A4 */
+      #pdf-export .doc .d-head { flex-direction: row; align-items: flex-start; }
+      #pdf-export .doc.zewa .d-head { align-items: flex-end; }
+      #pdf-export .doc.zewa .z-membrete { flex-direction: row; align-items: flex-end; }
+      #pdf-export .doc .d-title { text-align: right; }
+      #pdf-export .doc .d-cols { grid-template-columns: 1fr 1fr; }
+      #pdf-export .doc .d-totals { width: 300px; }
+      #pdf-export .doc { width: 794px !important; max-width: none !important; margin: 0 !important; padding: 0 36px !important; box-shadow: none !important; }
+      #pdf-export .docx-wrapper { background: none !important; padding: 0 !important; display: block !important; }
+      #pdf-export .docx-wrapper > section.docx { box-shadow: none !important; margin: 0 !important; }</style>${renderDoc(tipo, d)}</div>`;
+    document.body.appendChild(cont);
+    const slot = $('.docx-slot', cont);
+    if (slot) await renderWordInto(slot, plantillaConfig(d.plantilla), tipo, d);
+    await esperarCarga(document);
+    const nombre = `${d.numero} - ${clienteNombre(d.clienteId)}`.replace(/[\\/:*?"<>|]+/g, ' ').replace(/[.\s]+$/, '').trim() + '.pdf';
+    await html2pdf().set({
+      margin: [10, 0, 10, 0], filename: nombre,
+      image: { type: 'jpeg', quality: 0.95 },
+      html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', scrollX: 0, scrollY: 0 },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+      pagebreak: { mode: ['css', 'legacy'], before: '.d-pagina2, .docx-wrapper > section.docx + section.docx', avoid: ['tr', '.d-totals', '.d-sign', '.z-membrete', '.d-head', '.d-block:not(:has(table))', '.d-condiciones li', '.d-condiciones p', '.d-condiciones h5'] },
+    }).from($('#pdf-export', cont)).save();
+    toast('PDF descargado: ' + nombre);
+  } catch (e) {
+    console.error(e); toast('No se pudo generar el PDF: ' + e.message, 'bad');
+  } finally { cont?.remove(); }
 }
 async function printDoc(tipo, d) {
-  // La pestaña se abre ya, dentro del clic, para que el navegador del móvil no la bloquee
-  const win = esMovil() ? window.open('', '_blank') : null;
-  if (esMovil() && !win) return toast('El navegador bloqueó la ventana del PDF: permite las ventanas emergentes para esta página.', 'bad');
-  if (win) win.document.write('<p style="font:16px system-ui,sans-serif;padding:24px;color:#283d6a">Preparando el PDF…</p>');
+  if (esMovil()) return descargarPDF(tipo, d);
   const area = $('#print-area');
   area.innerHTML = renderDoc(tipo, d);
   const slot = $('.docx-slot', area);
   if (slot) {
     toast('Preparando PDF desde la plantilla Word…');
     try { await renderWordInto(slot, plantillaConfig(d.plantilla), tipo, d); }
-    catch (e) { win?.close(); return toast(e.message, 'bad'); }
+    catch (e) { return toast(e.message, 'bad'); }
   }
-  const titulo = `${d.numero} - ${clienteNombre(d.clienteId)}`;
-  const html = buildPrintHTML(titulo, area.innerHTML, !!slot);
+  const html = buildPrintHTML(`${d.numero} - ${clienteNombre(d.clienteId)}`, area.innerHTML, !!slot);
   area.innerHTML = '';
-  if (win) {
-    const barra = `<div class="zw-barra"><button onclick="window.print()">Imprimir / Guardar PDF</button><button class="sec" onclick="window.close()">Cerrar</button></div>
-      <style>
-        .zw-barra { position: sticky; top: 0; z-index: 9; display: flex; gap: 10px; justify-content: center; padding: 12px; background: #283d6a; box-shadow: 0 2px 8px rgba(0,0,0,.2); }
-        .zw-barra button { font: 600 17px system-ui, sans-serif; padding: 12px 20px; border-radius: 10px; border: 0; background: #c19c73; color: #fff; }
-        .zw-barra button.sec { background: transparent; border: 1px solid rgba(255,255,255,.6); }
-        @media screen { #print-area { padding: 16px 0; } #print-area .doc { box-shadow: 0 4px 20px rgba(0,0,0,.15) !important; margin: 0 auto !important; padding: 34px 40px !important; width: 794px !important; } }
-        @media print { .zw-barra { display: none !important; } }
-      </style>`;
-    // Página propia (blob) que se imprime sola al terminar de cargar estilos, logo y tipografía
-    const auto = `<script>window.addEventListener('load', function () { var go = function () { setTimeout(function () { window.print(); }, 300); };
-      if (document.fonts && document.fonts.ready) document.fonts.ready.then(go, go); else go(); });<\/script>`;
-    const url = URL.createObjectURL(new Blob([html.replace('<body>', '<body>' + barra).replace('</body>', auto + '</body>')], { type: 'text/html' }));
-    win.location.replace(url);
-    setTimeout(() => URL.revokeObjectURL(url), 60000);
-    return;
-  }
   $('#print-frame')?.remove();
   const fr = document.createElement('iframe');
   fr.id = 'print-frame';
