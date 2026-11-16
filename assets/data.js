@@ -56,7 +56,31 @@ const BLOQUES = {
   notas: 'Observaciones',
   firma: 'Firmas',
   pie: 'Pie de página',
+  condGenerales: 'Condiciones generales (2.ª página)',
 };
+
+/* Condiciones generales del presupuesto (segunda página). Formato:
+   "1. TÍTULO" → apartado · "* texto" → viñeta · línea en blanco → nuevo párrafo */
+const CONDICIONES_ZEWA_TITULO = 'Condiciones generales y aceptación del presupuesto';
+const CONDICIONES_ZEWA = `1. CONDICIONES DE PAGO
+* 5% reserva de fecha + IVA
+* 45% antes del inicio de la obra + IVA
+* 40% a mitad de obra + IVA
+* 10% durante la última semana de obra + IVA
+
+En caso de aceptación del presupuesto, el cliente deberá realizar un primer pago de 5% en concepto de paga y señal, que permitirá formalizar la contratación, reservar la fecha prevista de inicio de los trabajos.
+
+2. COMPROMISOS DEL CLIENTE
+Con la aceptación del presupuesto, el cliente se compromete a:
+* Cumplir los plazos de pago establecidos, realizando los abonos correspondientes según el calendario acordado.
+* Suministrar en los plazos previstos todos aquellos materiales, elementos y electrodomésticos cuya adquisición sea responsabilidad de la propiedad, según lo especificado en el presupuesto.
+* Validar las decisiones relativas al proyecto (distribución, materiales, acabados y otros detalles) dentro de los plazos acordados, con el fin de no interferir en la planificación de los trabajos.
+* Facilitar el acceso a la vivienda y las condiciones necesarias para el correcto desarrollo de la obra.
+
+Los retrasos derivados de la falta de suministro de materiales, decisiones pendientes o circunstancias imputables al cliente podrán ocasionar modificaciones en el calendario de ejecución, sin que Zewá Reformas sea responsable de dichos retrasos.
+
+3. MODIFICACIONES, TRABAJOS ADICIONALES Y PLAZOS DE EJECUCIÓN
+El presente presupuesto contempla únicamente los trabajos y suministros expresamente detallados en sus partidas. Cualquier modificación solicitada por el cliente, así como los trabajos adicionales que puedan surgir durante la ejecución de la obra y que no estuvieran contemplados inicialmente, deberán valorarse y comunicarse previamente para su aceptación. Estas modificaciones podrán implicar ajustes en el importe final y en los plazos de ejecución. La fecha de inicio y el plazo estimado de ejecución se concretarán una vez formalizada la reserva y definidos los aspectos necesarios del proyecto. Los plazos podrán verse modificados por imprevistos técnicos, cambios solicitados por el cliente, retrasos en el suministro de materiales o circunstancias ajenas al control de Zewá Reformas. En caso de incumplimiento de los plazos de pago acordados, Zewá Reformas se reserva el derecho de suspender temporalmente los trabajos, previa comunicación al cliente, hasta que se regularicen los importes pendientes. Esta suspensión podrá implicar una reprogramación de la obra y de su fecha de finalización.`;
 
 /* ---------- identidad visual Zewá ---------- */
 const ZEWA_COLORES = { azul: '#283d6a', dorado: '#c19c73', linea: '#b8a48f' };
@@ -65,6 +89,7 @@ const ZEWA_LOGO = 'assets/img/zewa-logo.png';
 /* ---------- helpers ---------- */
 const uid = (p = 'id') => p + '_' + Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-4);
 const todayISO = () => new Date().toISOString().slice(0, 10);
+const addMonths = (iso, n) => { const d = new Date(iso + 'T12:00:00'); const dia = d.getDate(); d.setMonth(d.getMonth() + n); if (d.getDate() !== dia) d.setDate(0); return d.toISOString().slice(0, 10); };
 const addDays = (iso, n) => { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
 const daysBetween = (a, b) => Math.round((new Date(b + 'T12:00:00') - new Date(a + 'T12:00:00')) / 86400000);
 const MONEDAS = {
@@ -240,7 +265,7 @@ function plantillaConfig(ref) {
 }
 function defaultTemplateConfig(tipo) {
   const orden = {
-    cotizacion: ['encabezado', 'cliente', 'general', 'detalle', 'totales', 'condiciones', 'notas', 'firma', 'pie'],
+    cotizacion: ['encabezado', 'cliente', 'general', 'detalle', 'totales', 'condiciones', 'notas', 'firma', 'pie', 'condGenerales'],
     factura: ['encabezado', 'cliente', 'general', 'detalle', 'totales', 'abonos', 'banco', 'notas', 'firma', 'pie'],
     abono: ['encabezado', 'cliente', 'general', 'detalle', 'totales', 'banco', 'notas', 'firma', 'pie'],
   }[tipo];
@@ -252,6 +277,7 @@ function defaultTemplateConfig(tipo) {
     pie: 'Gracias por su confianza · contacto@zewa.com',
     firmaNombre: 'ZEWÁ REFORMAS', firmaCargo: 'Gerencia',
     bloques: orden.map((k) => ({ k, on: true })),
+    ...(tipo === 'cotizacion' ? { condTitulo: CONDICIONES_ZEWA_TITULO, condGenerales: CONDICIONES_ZEWA } : {}),
     html: '', pdfBase: '',
     formato: 'diseno', docx: '', docxNombre: '',
   };
