@@ -395,6 +395,22 @@ textarea.in { resize: vertical; min-height: 70px; }
 .doc.zewa .d-sign .line { border-top-color: var(--z-filete); }
 .doc.zewa .d-foot { border-top: 1.5px solid var(--z-filete); color: #7a8296; }
 
+/* Segunda página: condiciones generales del presupuesto */
+.doc .d-pagina2 { position: relative; margin-top: 44px; padding-top: 34px; border-top: 2px dashed #cbd5e1; }
+.doc .d-pagina2::before { content: "Página 2"; position: absolute; top: -11px; left: 50%; transform: translateX(-50%); background: #fff; padding: 0 10px; font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: #94a3b8; }
+.doc .d-condiciones { margin-top: 18px; color: #334155; font-size: 11.5px; line-height: 1.55; text-align: justify; }
+.doc .d-condiciones h3 { font-size: 15px; color: var(--c1); text-transform: uppercase; letter-spacing: .06em; text-align: left; }
+.doc .d-cond-ref { font-size: 11px; color: #64748b; margin: 2px 0 12px; text-align: left; }
+.doc .d-condiciones h5 { font-size: 11.5px; color: var(--c1); text-transform: uppercase; letter-spacing: .05em; margin: 16px 0 6px; text-align: left; }
+.doc .d-condiciones h5 span { color: var(--c2); }
+.doc .d-condiciones p { margin: 6px 0; }
+.doc .d-condiciones ul { margin: 4px 0 8px; padding-left: 20px; }
+.doc .d-condiciones li { margin: 2px 0; }
+.doc .d-sign.d-sign-1 { justify-content: flex-end; margin-top: 30px; }
+.doc .d-sign.d-sign-1 > div { flex: 0 0 320px; }
+.doc.zewa .d-condiciones h5 { border-bottom: 1px solid #eee7de; padding-bottom: 3px; }
+.doc.zewa .d-condiciones li::marker { color: var(--z-oro); }
+
 /* Plantillas Word renderizadas (docx-preview) */
 .docx-slot { min-height: 120px; }
 .docx-slot .docx-wrapper { background: transparent !important; padding: 0 !important; align-items: center; }

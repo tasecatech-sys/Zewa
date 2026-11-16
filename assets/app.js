@@ -518,7 +518,7 @@ function DocEditor(tipo, id, query = {}) {
   const today = todayISO(), E = DB.empresa;
   const fromCot = query.cot ? getCot(query.cot) : null;
   const d = existing ? clone(existing) : isCot
-    ? { numero: '(automático)', fecha: today, vence: addDays(today, 30), proyecto: '', descripcion: '', clienteId: query.cli || '', items: [emptyItem()], validez: '30 días', formaPago: '50% anticipo, 50% contra entrega', tiempoEjecucion: '', observaciones: '', responsable: Store.user().nombre, estado: 'Borrador' }
+    ? { numero: '(automático)', fecha: today, vence: addMonths(today, 2), proyecto: '', descripcion: '', clienteId: query.cli || '', items: [emptyItem()], validez: '2 meses', formaPago: '50% anticipo, 50% contra entrega', tiempoEjecucion: '', observaciones: '', responsable: Store.user().nombre, estado: 'Borrador' }
     : { numero: '(automático)', fecha: today, fechaOperacion: today, vence: addDays(today, 30), clienteId: fromCot?.clienteId || query.cli || '', cotizacionId: fromCot?.id || '', items: fromCot ? clone(fromCot.items) : [emptyItem()], metodoPago: 'Transferencia', banco: E.banco, titular: E.titular, cuenta: E.cuenta, observaciones: '', estado: 'Emitida' };
   const base = isCot ? 'cotizaciones' : 'facturas';
   const cliOpts = `<option value="">Selecciona un cliente…</option>` + DB.clientes.map((c) => `<option value="${c.id}" ${c.id === d.clienteId ? 'selected' : ''}>${esc(c.razonSocial)} · ${esc(c.nit)}</option>`).join('');
@@ -670,7 +670,7 @@ function bindDocActions(tipo, d) {
     if (act === 'sign') signDialog(tipo, d);
     if (act === 'dup') {
       const n = { ...clone(d), id: uid(tipo.slice(0, 3)), numero: Store.nextNumber(isCot ? 'COT' : tipo === 'factura' ? 'FAC' : 'ABO'), fecha: todayISO(), firmas: {}, plantilla: plantillaActiva(tipo), creado: new Date().toISOString(), creadoPor: Store.user().nombre };
-      if (isCot) { Object.assign(n, { estado: 'Borrador', facturaId: null, vence: addDays(todayISO(), 30), proyecto: d.proyecto + ' (copia)' }); DB.cotizaciones.push(n); }
+      if (isCot) { Object.assign(n, { estado: 'Borrador', facturaId: null, vence: addMonths(todayISO(), 2), proyecto: d.proyecto + ' (copia)' }); DB.cotizaciones.push(n); }
       else { Object.assign(n, { estado: 'Emitida', cotizacionId: '', vence: addDays(todayISO(), 30) }); DB.facturas.push(n); }
       audit('Duplicar', ent, n.numero, 'Copia de ' + d.numero); persist(); toast('Documento duplicado: ' + n.numero);
       go(`/${isCot ? 'cotizaciones' : 'facturas'}/${n.id}/editar`);
@@ -884,6 +884,22 @@ function FacDetalle(id, tab = 'doc') {
 /* ==========================================================
    Render de documentos con plantillas versionadas
    ========================================================== */
+/* Convierte el texto de condiciones en HTML: "1. Título" → apartado, "* x" → viñeta, resto → párrafo */
+function textoCondiciones(txt) {
+  const out = []; let lista = null;
+  const cerrar = () => { if (lista) { out.push(`<ul>${lista.join('')}</ul>`); lista = null; } };
+  String(txt || '').split(/\r?\n/).forEach((raw) => {
+    const l = raw.trim();
+    if (!l) return cerrar();
+    const vin = l.match(/^[*•-]\s+(.*)$/);
+    if (vin) { (lista = lista || []).push(`<li>${esc(vin[1])}</li>`); return; }
+    cerrar();
+    const tit = l.match(/^(\d+)[.)]\s+(.*)$/);
+    out.push(tit && tit[2] === tit[2].toUpperCase() ? `<h5><span>${tit[1]}.</span> ${esc(tit[2])}</h5>` : `<p>${esc(l)}</p>`);
+  });
+  cerrar();
+  return out.join('');
+}
 function renderDoc(tipo, d, cfgOverride) {
   const cfg = cfgOverride || plantillaConfig(d.plantilla);
   if (cfg.formato === 'word' && cfg.docx) return wordSlot(tipo, d, cfg);
@@ -922,6 +938,9 @@ function renderDoc(tipo, d, cfgOverride) {
     notas: () => d.observaciones ? `<div class="d-block"><h4>Observaciones</h4><div class="d-note">${esc(d.observaciones)}</div></div>` : '',
     firma: () => `<div class="d-sign"><div>${firma('emisor') ? `<img src="${firma('emisor').img}" alt="Firma">` : '<div style="height:64px"></div>'}<div class="line"><b>${esc(firma('emisor')?.nombre || cfg.firmaNombre)}</b><br><small>${esc(cfg.firmaCargo)} · ${esc(E.razonSocial)}</small>${firma('emisor') ? `<br><small style="color:#15803d">Firmado digitalmente ${fmtDateTime(firma('emisor').fecha)}</small>` : ''}</div></div>
       <div>${firma('cliente') ? `<img src="${firma('cliente').img}" alt="Firma cliente">` : '<div style="height:64px"></div>'}<div class="line"><b>${esc(firma('cliente')?.nombre || cli.contacto || 'Cliente')}</b><br><small>${tipo === 'cotizacion' ? 'Aceptación del cliente' : esc(cli.razonSocial || '')}</small>${firma('cliente') ? `<br><small style="color:#15803d">Firmado digitalmente ${fmtDateTime(firma('cliente').fecha)}</small>` : ''}</div></div></div>`,
+    condGenerales: () => tipo !== 'cotizacion' || !(cfg.condGenerales || '').trim() ? '' : `<div class="d-pagina2">${cfg.estilo === 'zewa' ? B.encabezado().split('<div class="d-head">')[0] : ''}
+      <div class="d-condiciones"><h3>${esc(cfg.condTitulo || CONDICIONES_ZEWA_TITULO)}</h3><div class="d-cond-ref">Presupuesto ${esc(d.numero || '')}${d.proyecto ? ' · ' + esc(d.proyecto) : ''}</div>${textoCondiciones(cfg.condGenerales)}</div>
+      <div class="d-sign d-sign-1"><div>${firma('cliente') ? `<img src="${firma('cliente').img}" alt="Firma cliente">` : '<div style="height:64px"></div>'}<div class="line"><b>${esc(firma('cliente')?.nombre || cli.contacto || cli.razonSocial || 'Cliente')}</b><br><small>Leído y aceptado por el cliente · Fecha: ${firma('cliente')?.fecha ? fmtDate(firma('cliente').fecha.slice(0, 10)) : '____ / ____ / ________'}</small></div></div></div></div>`,
     pie: () => `<div class="d-foot">${esc(cfg.pie)}${d.plantilla ? `<br>Plantilla v${d.plantilla.version} · Generado por ZEWÁ` : ''}</div>`,
   };
   if (cfg.html && cfg.html.trim()) {
@@ -954,7 +973,32 @@ function buildPrintHTML(title, bodyHTML, isWord) {
       #print-area .docx-wrapper { background: none !important; padding: 0 !important; display: block !important; }
       #print-area .docx-wrapper > section.docx { box-shadow: none !important; margin: 0 !important; break-after: page; }
       #print-area .docx-wrapper > section.docx:last-child { break-after: auto; }
-      #print-area .doc tr, #print-area .doc .d-totals, #print-area .doc .d-sign { break-inside: avoid; }
+      /* Imprimir los fondos (cabecera de tabla, franja del total, recuadros): sin esto el texto blanco desaparece */
+      *, *::before, *::after { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+      /* Más compacto en papel para que un presupuesto normal quepa en una hoja y las condiciones vayan en la segunda */
+      #print-area .doc { font-size: 11px; line-height: 1.42; }
+      #print-area .doc .z-membrete { padding-bottom: 8px; }
+      #print-area .doc .z-membrete img { height: 52px; }
+      #print-area .doc .d-head { margin-top: 12px; }
+      #print-area .doc .d-title h2 { font-size: 21px; }
+      #print-area .doc .d-block { margin-top: 12px; }
+      #print-area .doc .d-block:has(> .d-cols) { padding: 7px 12px; }
+      #print-area .doc .d-cols { gap: 3px 20px; }
+      #print-area .doc th { padding: 6px 8px; }
+      #print-area .doc td { padding: 5px 8px; }
+      #print-area .doc .d-totals { margin-top: 6px; }
+      #print-area .doc .d-totals div { padding: 3px 8px; }
+      #print-area .doc .d-totals .g { padding: 6px 10px; }
+      #print-area .doc .d-sign { margin-top: 20px; }
+      #print-area .doc .d-sign > div > div[style*="height:64px"] { height: 40px !important; }
+      #print-area .doc .d-foot { margin-top: 14px; padding-top: 8px; font-size: 10px; }
+      #print-area .doc .d-condiciones { font-size: 10.5px; line-height: 1.5; margin-top: 12px; }
+      #print-area .doc tr, #print-area .doc .d-totals, #print-area .doc .d-sign, #print-area .doc .z-membrete, #print-area .doc .d-head { break-inside: avoid; }
+      #print-area .doc .d-block:not(:has(table)), #print-area .doc .d-condiciones li, #print-area .doc .d-condiciones p { break-inside: avoid; }
+      #print-area .doc h4, #print-area .doc h5, #print-area .doc thead { break-after: avoid; }
+      #print-area .doc thead { display: table-header-group; }
+      #print-area .doc .d-pagina2 { break-before: page; margin-top: 0 !important; padding-top: 0 !important; border-top: 0 !important; }
+      #print-area .doc .d-pagina2::before { display: none !important; }
     </style></head><body><div id="print-area">${bodyHTML}</div></body></html>`;
 }
 async function printDoc(tipo, d) {
@@ -975,7 +1019,17 @@ async function printDoc(tipo, d) {
   fr.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden';
   document.body.appendChild(fr);
   fr.contentDocument.open(); fr.contentDocument.write(html); fr.contentDocument.close();
-  const fire = () => setTimeout(() => { fr.contentWindow.focus(); fr.contentWindow.print(); }, 250);
+  // Esperar a que carguen la hoja de estilos, la tipografía y las imágenes (logo) antes de imprimir
+  const fire = async () => {
+    const doc = fr.contentDocument;
+    try {
+      await Promise.race([Promise.all([
+        doc.fonts?.ready,
+        ...[...doc.images].map((im) => (im.complete ? null : new Promise((r) => { im.onload = im.onerror = r; }))),
+      ]), new Promise((r) => setTimeout(r, 3000))]);
+    } catch (e) { /* imprimir igualmente */ }
+    setTimeout(() => { fr.contentWindow.focus(); fr.contentWindow.print(); }, 150);
+  };
   if (fr.contentDocument.readyState === 'complete') fire(); else fr.addEventListener('load', fire, { once: true });
 }
 function sendMail(tipo, d) {
@@ -1115,7 +1169,11 @@ function PlantillaEditor(id, query = {}) {
       <div class="f s12"><label>Encabezado (datos del emisor)</label><textarea class="in" data-k="encabezado" rows="3">${esc(cfg.encabezado)}</textarea></div>
       <div class="f s12"><label>Pie de página</label><textarea class="in" data-k="pie" rows="2">${esc(cfg.pie)}</textarea></div>
       <div class="f s6"><label>Firma: nombre</label><input class="in" data-k="firmaNombre" value="${esc(cfg.firmaNombre)}"></div>
-      <div class="f s6"><label>Firma: cargo</label><input class="in" data-k="firmaCargo" value="${esc(cfg.firmaCargo)}"></div></div>`,
+      <div class="f s6"><label>Firma: cargo</label><input class="in" data-k="firmaCargo" value="${esc(cfg.firmaCargo)}"></div>
+      ${p.tipo === 'cotizacion' ? `<div class="section-title">Condiciones generales (2.ª página)</div>
+      <div class="f s12"><label>Título</label><input class="in" data-k="condTitulo" value="${esc(cfg.condTitulo ?? CONDICIONES_ZEWA_TITULO)}"></div>
+      <div class="f s12"><label>Texto</label><textarea class="in" data-k="condGenerales" rows="14" style="font-size:12.5px;line-height:1.5">${esc(cfg.condGenerales ?? '')}</textarea>
+        <span class="hint">«1. TÍTULO» en mayúsculas crea un apartado · «* texto» crea una viñeta · deja una línea en blanco entre párrafos. Si lo dejas vacío no se imprime la segunda página. Puedes moverla u ocultarla en la pestaña Bloques.</span></div>` : ''}</div>`,
     blo: () => `<p class="hint" style="margin-top:0">Arrastra para reordenar las secciones del documento. Desmarca para ocultarlas.</p><ul class="blocks" id="blocks">${cfg.bloques.map((b, i) => `<li draggable="true" data-i="${i}"><span class="grip">${ico('grip')}</span>${BLOQUES[b.k]}<input type="checkbox" ${b.on ? 'checked' : ''} aria-label="Mostrar ${BLOQUES[b.k]}"></li>`).join('')}</ul>`,
     html: () => `<div class="form-grid"><div class="f s12"><label>Plantilla HTML personalizada (opcional)</label><textarea class="in" data-k="html" rows="10" style="font-family:monospace;font-size:12px" placeholder="<h1>{{titulo}} {{numero}}</h1>…">${esc(cfg.html)}</textarea>
       <span class="hint">Si hay HTML, reemplaza el diseño por bloques. Variables: {{titulo}} {{numero}} {{fecha}} {{vence}} {{cliente}} {{nit}} {{direccion}} {{ciudad}} {{telefono}} {{correo}} {{proyecto}} {{detalle}} {{totales}} {{subtotal}} {{iva}} {{total}} {{saldo}} {{observaciones}} {{firma}} {{logo}} {{empresa}}. Los scripts se eliminan por seguridad.</span></div>
@@ -1696,6 +1754,15 @@ function asegurarPlantillas() {
     config.firmaNombre = E.razonSocial || config.firmaNombre;
     DB.plantillas.push({ id: uid('tpl'), tipo: t, nombre: nombres[t], estado: 'Activa', creado: ahora, creadoPor: Store.user().nombre, versiones: [{ version: 1, fecha: ahora, usuario: Store.user().nombre, nota: 'Diseño corporativo Zewá (Plantilla Zewa.docx)', config }] });
     audit('Crear', 'Plantilla', nombres[t], 'Diseño corporativo Zewá');
+    cambio = true;
+  });
+  // Condiciones generales en la 2.ª página del presupuesto (una sola vez por plantilla)
+  DB.plantillas.filter((p) => p.tipo === 'cotizacion' && p.estado === 'Activa').forEach((p) => {
+    const ult = p.versiones.at(-1); const c = ult?.config;
+    if (!c || c.formato === 'word' || 'condGenerales' in c) return;
+    const config = { ...clone(c), condTitulo: CONDICIONES_ZEWA_TITULO, condGenerales: CONDICIONES_ZEWA, bloques: [...(c.bloques || []).filter((b) => b.k !== 'condGenerales'), { k: 'condGenerales', on: true }] };
+    p.versiones.push({ version: ult.version + 1, fecha: new Date().toISOString(), usuario: Store.user().nombre, nota: 'Añadidas las condiciones generales en la segunda página', config });
+    audit('Editar', 'Plantilla', p.nombre, `v${ult.version + 1}: condiciones generales en la segunda página`);
     cambio = true;
   });
   return cambio;
