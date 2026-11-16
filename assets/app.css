@@ -215,6 +215,18 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 
 /* ---------- Forms ---------- */
 [hidden] { display: none !important; }
+.borr-aviso { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; border-left: 4px solid var(--gold); background: var(--gold-50); }
+.borr-aviso > div:first-child { display: flex; gap: 10px; align-items: flex-start; }
+.borr-aviso > div:first-child svg { color: var(--gold-600, var(--gold)); flex: none; margin-top: 2px; }
+.borr-aviso b { display: block; } .borr-aviso span { font-size: 13px; color: var(--text-2); }
+.envio-pdf { display: flex; align-items: center; gap: 10px; margin-top: 12px; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); font-size: 13px; color: var(--text-2); }
+.envio-pdf[data-st="ok"] { background: var(--ok-bg, #e7f6ee); color: var(--ok); }
+.envio-pdf[data-st="error"] { background: var(--bad-bg, #fde8e8); color: var(--bad); }
+.envio-pdf[data-st] .spin { display: none; }
+.envio-pdf .spin { width: 16px; height: 16px; flex: none; border-radius: 50%; border: 2px solid var(--border); border-top-color: var(--brand); animation: zwgiro .8s linear infinite; }
+.envio-pdf svg { width: 15px; height: 15px; vertical-align: -3px; }
+@keyframes zwgiro { to { transform: rotate(360deg); } }
+#autoInfo { display: inline-flex; align-items: center; gap: 6px; color: var(--ok); }
 .form-grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 14px 16px; }
 .f { grid-column: span 4; display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .f.s2 { grid-column: span 2; } .f.s3 { grid-column: span 3; } .f.s6 { grid-column: span 6; } .f.s8 { grid-column: span 8; } .f.s12 { grid-column: 1 / -1; }

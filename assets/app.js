@@ -295,8 +295,8 @@ const CLIENTE_FIELDS = [
   ['codigo', 'ID Cliente', 's3', { readonly: true }],
   ['tipo', 'Tipo persona', 's3', { req: 1, options: ['Jurídica', 'Física'] }],
   ['nit', 'NIF / CIF', 's6', { req: 1 }],
-  ['razonSocial', 'Razón social', 's6', { req: 1 }],
   ['nombreComercial', 'Nombre comercial', 's6', { req: 1 }],
+  ['razonSocial', 'Razón social (opcional)', 's6'],
   ['sec', 'Contacto'],
   ['telefono', 'Teléfono', 's3', { req: 1 }],
   ['celular', 'Móvil', 's3', { req: 1 }],
@@ -316,10 +316,17 @@ function fieldHTML([k, label, span, o = {}], val) {
   const v = esc(val ?? '');
   const ctl = o.options ? `<select class="in" name="${k}">${o.options.map((x) => `<option ${x === val ? 'selected' : ''}>${x}</option>`).join('')}</select>`
     : o.textarea ? `<textarea class="in" name="${k}">${v}</textarea>`
-      : `<input class="in" name="${k}" type="${o.type || 'text'}" value="${v}" ${o.readonly ? 'readonly' : ''}>`;
+      : o.type === 'number' ? `<input class="in" name="${k}" type="text" inputmode="decimal" data-num value="${esc(fmtInputNum(val))}" ${o.readonly ? 'readonly' : ''}>`
+        : `<input class="in" name="${k}" type="${o.type || 'text'}" value="${v}" ${o.readonly ? 'readonly' : ''}>`;
   return `<div class="f ${span}"><label>${label}${o.req ? ' <span class="req">*</span>' : ''}</label>${ctl}</div>`;
 }
-function formValues(form) { return Object.fromEntries(new FormData(form).entries()); }
+function formValues(form) {
+  const v = Object.fromEntries(new FormData(form).entries());
+  $$('[data-num][name]', form).forEach((el) => { if (el.name in v) v[el.name] = el.value.trim() === '' ? '' : parseNum(el.value); });
+  return v;
+}
+// Al salir de un campo numérico se muestra con formato español (1.234,5)
+document.addEventListener('focusout', (e) => { const el = e.target; if (el.matches?.('input[data-num]') && el.value.trim() !== '') el.value = fmtInputNum(el.value); });
 function validateRequired(form, fields) {
   let ok = true;
   fields.forEach(([k, , , o]) => {
@@ -341,10 +348,13 @@ function ClienteForm(id) {
      <div class="btn-row" style="justify-content:flex-end;margin-top:18px"><a class="btn" href="${id ? '#/clientes/' + id : '#/clientes'}">Cancelar</a><button class="btn primary">${ico('check')}Guardar cliente</button></div></form>`;
   const form = $('#frm');
   form.tipo.addEventListener('change', () => { if (form.tipo.value === 'Física' && !form.nombreComercial.value) form.nombreComercial.value = form.razonSocial.value; });
+  if (id && c.razonSocial === c.nombreComercial) form.razonSocial.placeholder = 'Igual que el nombre comercial';
   form.addEventListener('submit', (e) => {
     e.preventDefault();
     if (!validateRequired(form, CLIENTE_FIELDS)) return toast('Revisa los campos obligatorios marcados en rojo.', 'bad');
     const v = formValues(form); delete v.codigo;
+    // Si no se indica razón social se usa el nombre comercial (los documentos muestran la razón social)
+    v.nombreComercial = v.nombreComercial.trim(); if (!String(v.razonSocial || '').trim()) v.razonSocial = v.nombreComercial;
     const dup = DB.clientes.find((x) => x.nit.replace(/\D/g, '') === v.nit.replace(/\D/g, '') && x.id !== id);
     if (dup) { form.nit.classList.add('invalid'); return toast(`El NIF ya existe: ${dup.razonSocial}`, 'bad'); }
     if (id) {
@@ -557,7 +567,7 @@ function DocEditor(tipo, id, query = {}) {
         <div class="f s12"><label>Observaciones</label><textarea class="in" name="observaciones">${esc(d.observaciones)}</textarea></div>
       </div>
       <datalist id="bancos">${BANCOS.map((b) => `<option>${b}</option>`).join('')}</datalist>
-      <div class="btn-row" style="justify-content:flex-end;margin-top:18px"><a class="btn" href="${existing ? `#/${base}/${id}` : '#/' + base}">Cancelar</a><button class="btn primary">${ico('check')}${existing ? 'Guardar cambios' : isCot ? 'Crear presupuesto' : 'Emitir factura'}</button></div></div>
+      <div class="btn-row" style="justify-content:flex-end;margin-top:18px"><span class="hint" id="autoInfo" style="margin-right:auto"></span><a class="btn" href="${existing ? `#/${base}/${id}` : '#/' + base}">Cancelar</a><button class="btn primary">${ico('check')}${existing ? 'Guardar cambios' : isCot ? 'Crear presupuesto' : 'Emitir factura'}</button></div></div>
     </form>`;
   const form = $('#frm');
   const items = d.items;
@@ -575,10 +585,10 @@ function DocEditor(tipo, id, query = {}) {
   const renderItems = () => {
     $('#items').innerHTML = items.map((it, i) => { const l = lineCalc(it); return `<tr data-i="${i}">
       <td><input data-f="concepto" value="${esc(it.concepto)}" placeholder="Concepto"><textarea data-f="descripcion" rows="1" placeholder="Descripción">${esc(it.descripcion)}</textarea></td>
-      <td class="num"><input data-f="cantidad" type="number" min="0" step="any" value="${it.cantidad}"></td>
-      <td class="num"><input data-f="valor" type="number" min="0" step="any" value="${it.valor}"></td>
-      <td class="num"><input data-f="desc" type="number" min="0" max="100" step="any" value="${it.desc}"></td>
-      <td class="num"><input data-f="iva" type="number" min="0" max="100" step="any" value="${it.iva}" list="ivas"></td>
+      <td class="num"><input data-f="cantidad" data-num type="text" inputmode="decimal" value="${fmtInputNum(it.cantidad)}"></td>
+      <td class="num"><input data-f="valor" data-num type="text" inputmode="decimal" value="${fmtInputNum(it.valor)}"></td>
+      <td class="num"><input data-f="desc" data-num type="text" inputmode="decimal" value="${fmtInputNum(it.desc)}"></td>
+      <td class="num"><input data-f="iva" data-num type="text" inputmode="decimal" value="${fmtInputNum(it.iva)}" list="ivas"><small class="muted" data-ivav style="display:block;margin-top:3px;font-size:11px">${fmtMoney(l.iva)}</small></td>
       <td class="num" data-sub>${fmtMoney(l.base)}</td><td class="num strong" data-tot>${fmtMoney(l.total)}</td>
       <td><button type="button" class="btn icon ghost sm" data-del title="Quitar línea">${ico('trash')}</button></td></tr>`; }).join('') + '<datalist id="ivas"><option>0</option><option>4</option><option>10</option><option>21</option></datalist>';
     renderTotals();
@@ -586,15 +596,15 @@ function DocEditor(tipo, id, query = {}) {
   $('#items').addEventListener('input', (e) => {
     const tr = e.target.closest('tr'), f = e.target.dataset.f; if (!tr || !f) return;
     const it = items[+tr.dataset.i];
-    it[f] = ['concepto', 'descripcion'].includes(f) ? e.target.value : +e.target.value;
-    const l = lineCalc(it); $('[data-sub]', tr).textContent = fmtMoney(l.base); $('[data-tot]', tr).textContent = fmtMoney(l.total);
+    it[f] = ['concepto', 'descripcion'].includes(f) ? e.target.value : parseNum(e.target.value);
+    const l = lineCalc(it); $('[data-sub]', tr).textContent = fmtMoney(l.base); $('[data-tot]', tr).textContent = fmtMoney(l.total); $('[data-ivav]', tr).textContent = fmtMoney(l.iva);
     renderTotals();
   });
   $('#items').addEventListener('click', (e) => { const b = e.target.closest('[data-del]'); if (!b) return; items.splice(+b.closest('tr').dataset.i, 1); if (!items.length) items.push(emptyItem()); renderItems(); });
   $('#addItem').addEventListener('click', () => { items.push(emptyItem()); renderItems(); $$('#items tr:last-child input')[0].focus(); });
   $('#addFromInv').addEventListener('click', () => inventoryPicker((it) => {
     items.push({ concepto: it.nombre, descripcion: it.descripcion || '', cantidad: 1, valor: +it.precioVenta || 0, iva: it.iva ?? (DB.empresa.ivaDefault ?? 21), desc: 0 });
-    renderItems();
+    renderItems(); window.__zwAutoguardar?.();
   }));
   form.clienteId.addEventListener('change', showCli);
   form.cotizacionId?.addEventListener('change', () => {
@@ -603,6 +613,47 @@ function DocEditor(tipo, id, query = {}) {
     else renderTotals();
   });
   showCli(); renderItems();
+
+  /* ---- Autoguardado: cada cambio se guarda en este dispositivo; si se sale sin guardar se puede recuperar ---- */
+  const kBorr = `zw_borrador_${tipo}_${existing ? existing.id : 'nuevo'}_${DB.usuarioActual}`;
+  const estado = () => JSON.stringify({ v: formValues(form), items });
+  const inicial = estado();
+  let tAuto = null, cerrado = false;
+  const limpiarBorr = () => { cerrado = true; clearTimeout(tAuto); try { localStorage.removeItem(kBorr); } catch (e) { /* sin almacenamiento */ } };
+  const autoguardar = () => {
+    clearTimeout(tAuto);
+    tAuto = setTimeout(() => {
+      if (cerrado || !document.body.contains(form)) return;
+      const ahora = estado();
+      try {
+        if (ahora === inicial) { localStorage.removeItem(kBorr); $('#autoInfo').textContent = ''; return; }
+        localStorage.setItem(kBorr, JSON.stringify({ fecha: new Date().toISOString(), v: formValues(form), items }));
+        $('#autoInfo').innerHTML = `${ico('check')} Borrador guardado automáticamente · ${new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}`;
+      } catch (e) { /* almacenamiento lleno o bloqueado */ }
+    }, 400);
+  };
+  form.addEventListener('input', autoguardar);
+  form.addEventListener('change', autoguardar);
+  form.addEventListener('click', (e) => { if (e.target.closest('[data-del], #addItem')) autoguardar(); });
+  window.__zwAutoguardar = autoguardar; // también tras añadir desde inventario
+  let borr = null; try { borr = JSON.parse(localStorage.getItem(kBorr)); } catch (e) { borr = null; }
+  if (borr && JSON.stringify({ v: borr.v, items: borr.items }) !== inicial) {
+    const aviso = document.createElement('div');
+    aviso.className = 'card card-pad borr-aviso';
+    aviso.innerHTML = `<div>${ico('clock')}<div><b>Tienes cambios sin guardar</b><span>Del ${fmtDateTime(borr.fecha)}. ¿Quieres recuperarlos?</span></div></div>
+      <div class="btn-row"><button type="button" class="btn sm" data-b="no">Descartar</button><button type="button" class="btn sm primary" data-b="si">${ico('check')}Recuperar</button></div>`;
+    form.prepend(aviso);
+    aviso.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-b]'); if (!b) return;
+      if (b.dataset.b === 'si') {
+        Object.entries(borr.v || {}).forEach(([k, val]) => { const el = form.elements[k]; if (el && !(el instanceof RadioNodeList)) el.value = val; });
+        items.splice(0, items.length, ...(borr.items?.length ? borr.items : [emptyItem()]));
+        showCli(); renderItems(); toast('Cambios recuperados. Recuerda pulsar Guardar.');
+      } else { try { localStorage.removeItem(kBorr); } catch (x) { /* nada */ } }
+      aviso.remove();
+    });
+  }
+
   form.addEventListener('submit', (e) => {
     e.preventDefault();
     const v = formValues(form);
@@ -621,12 +672,12 @@ function DocEditor(tipo, id, query = {}) {
       const before = clone(existing); Object.assign(existing, data, { actualizado: new Date().toISOString(), modificadoPor: Store.user().nombre });
       if (!isCot) relinkFacturaCot(existing, before.cotizacionId);
       audit('Editar', isCot ? 'Presupuesto' : 'Factura', existing.numero, isCot ? existing.proyecto : clienteNombre(existing.clienteId), diffObjects(before, existing));
-      persist(); toast('Cambios guardados'); return go(`/${base}/${existing.id}`);
+      limpiarBorr(); persist(); toast('Cambios guardados'); return go(`/${base}/${existing.id}`);
     }
     const n = { id: uid(isCot ? 'cot' : 'fac'), numero: Store.nextNumber(isCot ? 'COT' : 'FAC'), ...data, firmas: {}, plantilla: plantillaActiva(tipo), creado: new Date().toISOString(), creadoPor: Store.user().nombre };
     if (isCot) { n.facturaId = null; DB.cotizaciones.push(n); audit('Crear', 'Presupuesto', n.numero, n.proyecto); }
     else { n.estado = 'Emitida'; DB.facturas.push(n); relinkFacturaCot(n, null); audit('Crear', 'Factura', n.numero, `${clienteNombre(n.clienteId)} · ${fmtMoney(docTotals(n.items).total)}`); }
-    persist(); toast(isCot ? `Presupuesto ${n.numero} creado` : `Factura ${n.numero} emitida`); go(`/${base}/${n.id}`);
+    limpiarBorr(); persist(); toast(isCot ? `Presupuesto ${n.numero} creado` : `Factura ${n.numero} emitida`); go(`/${base}/${n.id}`);
   });
 }
 /* Vincula factura ↔ cotización y traslada los abonos (anticipos) de la cotización a la factura */
@@ -778,7 +829,7 @@ function AbonoForm(query = {}) {
       <div class="f s3"><label>Forma de pago</label><select class="in" name="formaPago">${FORMAS_PAGO.map((f) => `<option>${f}</option>`).join('')}</select></div>
       <div class="f s3"><label>Banco</label><input class="in" name="banco" list="bancos" value="${esc(DB.empresa.banco)}"><datalist id="bancos">${BANCOS.map((b) => `<option>${b}</option>`).join('')}</datalist></div>
       <div class="f s3"><label>Referencia de operación</label><input class="in" name="referencia" placeholder="Nº de operación"></div>
-      <div class="f s3"><label>Importe del cobro <span class="req">*</span></label><input class="in" type="number" min="0" step="any" name="valor"></div>
+      <div class="f s3"><label>Importe del cobro <span class="req">*</span></label><input class="in" type="text" inputmode="decimal" data-num name="valor" placeholder="0,00"></div>
       <div class="f s12"><span class="hint" id="valHint"></span></div>
     </div><div class="btn-row" style="justify-content:flex-end;margin-top:18px"><a class="btn" href="#/abonos">Cancelar</a><button class="btn primary">${ico('check')}Registrar cobro</button></div></form>
     <div class="card"><div class="card-head"><h3>Control financiero</h3></div><div id="fin" class="card-pad"></div></div></div>`;
@@ -795,13 +846,13 @@ function AbonoForm(query = {}) {
   const fin = () => {
     const c = getCot(form.cotizacionId.value), f = getFac(form.facturaId.value);
     const r = c ? proyectoResumen(c) : f ? (() => { const x = facturaResumen(f); return { total: x.total, abonado: x.abonado, saldo: x.saldo, abonos: x.abonos, pct: x.total ? (x.abonado / x.total) * 100 : 0 }; })() : null;
-    const v = +form.valor.value || 0;
+    const v = parseNum(form.valor.value);
     $('#fin').innerHTML = r ? `<div class="kv" style="grid-template-columns:1fr">${[['Total proyecto', r.total], ['Total cobrado', r.abonado], ['Saldo pendiente', r.saldo], ['Saldo después de este cobro', Math.max(0, r.saldo - v)]].map(([l, x]) => `<div><small>${l}</small><span style="font-size:18px;font-weight:700">${fmtMoney(x)}</span></div>`).join('')}</div>
       <div class="progress mt"><i style="width:${Math.min(100, ((r.abonado + v) / (r.total || 1)) * 100)}%"></i></div>
       <h4 class="mt" style="font-size:13px">Historial</h4>${r.abonos.length ? `<table class="mini-tbl">${r.abonos.map((a) => `<tr><td>${fmtDate(a.fecha)}</td><td>${esc(a.concepto)}</td><td class="num">${fmtMoney(a.valor)}</td></tr>`).join('')}</table>` : '<small class="hint">Sin cobros previos</small>'}`
       : emptyState('Selecciona un presupuesto o una factura para ver el saldo', 'wallet');
     $('#valHint').innerHTML = r && v > r.saldo ? `<span style="color:var(--bad)">⚠ El importe supera el saldo pendiente (${fmtMoney(r.saldo)}).</span>` : r ? `Saldo pendiente: ${fmtMoney(r.saldo)} · <a href="#" id="fillSaldo">usar saldo total</a>` : '';
-    $('#fillSaldo')?.addEventListener('click', (e) => { e.preventDefault(); form.valor.value = Math.round(r.saldo); fin(); });
+    $('#fillSaldo')?.addEventListener('click', (e) => { e.preventDefault(); form.valor.value = fmtInputNum(Math.round(r.saldo * 100) / 100); fin(); });
   };
   form.clienteId.addEventListener('change', () => { form.cotizacionId.value = ''; form.facturaId.value = ''; fill(); });
   form.cotizacionId.addEventListener('change', () => { const c = getCot(form.cotizacionId.value); if (c?.facturaId) form.facturaId.value = c.facturaId; fin(); });
@@ -927,7 +978,7 @@ function renderDoc(tipo, d, cfgOverride) {
           : [['Presupuesto asociado', cotRel?.numero], ['Factura asociada', getFac(d.facturaId)?.numero], ['Proyecto', cotRel?.proyecto], ['Forma de pago', d.formaPago], ['Banco', d.banco], ['Referencia de operación', d.referencia]];
       return `<div class="d-block"><h4>${tipo === 'cotizacion' ? 'Datos generales' : 'Información del documento'}</h4><div class="d-cols">${rows.filter(([, v]) => v).map(([k, v]) => `<div><small>${k}:</small>${esc(v)}</div>`).join('')}</div>${tipo === 'cotizacion' && d.descripcion ? `<p style="margin:8px 0 0">${esc(d.descripcion)}</p>` : ''}</div>`;
     },
-    detalle: () => `<div class="d-block"><table><thead><tr><th>Concepto</th>${tipo === 'abono' ? '' : '<th class="r">Cant.</th><th class="r">Precio unit.</th><th class="r">Desc.</th><th class="r">IVA</th>'}<th class="r">Total</th></tr></thead><tbody>${items.map((it) => { const l = lineCalc(it); return `<tr><td><b>${esc(it.concepto)}</b>${it.descripcion ? `<small>${esc(it.descripcion)}</small>` : ''}</td>${tipo === 'abono' ? '' : `<td class="r">${it.cantidad}</td><td class="r">${fmtMoney(it.valor)}</td><td class="r">${+it.desc ? it.desc + '%' : '—'}</td><td class="r">${it.iva}%</td>`}<td class="r">${fmtMoney(l.total)}</td></tr>`; }).join('')}</tbody></table></div>`,
+    detalle: () => `<div class="d-block"><table><thead><tr><th>Concepto</th>${tipo === 'abono' ? '' : '<th class="r">Cant.</th><th class="r">Precio unit.</th><th class="r">Desc.</th><th class="r">IVA</th>'}<th class="r">Total</th></tr></thead><tbody>${items.map((it) => { const l = lineCalc(it); return `<tr><td><b>${esc(it.concepto)}</b>${it.descripcion ? `<small>${esc(it.descripcion)}</small>` : ''}</td>${tipo === 'abono' ? '' : `<td class="r">${fmtNumero(it.cantidad, 0, 4)}</td><td class="r">${fmtMoney(it.valor)}</td><td class="r">${+it.desc ? fmtPct(it.desc) : '—'}</td><td class="r d-iva">${fmtPct(it.iva)}<small>${fmtMoney(l.iva)}</small></td>`}<td class="r">${fmtMoney(l.total)}</td></tr>`; }).join('')}</tbody></table></div>`,
     totales: () => tipo === 'abono'
       ? `<div class="d-totals"><div class="g"><span>Importe recibido</span><span>${fmtMoney(d.valor)}</span></div>${pr ? `<div><span>Total proyecto</span><span>${fmtMoney(pr.total)}</span></div><div><span>Total cobrado</span><span>${fmtMoney(pr.abonado)}</span></div><div><b>Saldo pendiente</b><b>${fmtMoney(pr.saldo)}</b></div>` : ''}</div>`
       : `<div class="d-totals"><div><span>Subtotal</span><span>${fmtMoney(t.subtotal)}</span></div>${t.descuento ? `<div><span>Descuento</span><span>− ${fmtMoney(t.descuento)}</span></div>` : ''}<div><span>Base imponible</span><span>${fmtMoney(t.base)}</span></div><div><span>IVA</span><span>${fmtMoney(t.iva)}</span></div><div class="g"><span>Total ${tipo === 'cotizacion' ? 'presupuesto' : 'factura'}</span><span>${fmtMoney(t.total)}</span></div>
@@ -1047,7 +1098,7 @@ const cargarPdfLib = () => (pdfLibPromise ||= new Promise((res, rej) => {
 }));
 /* Genera el PDF en el navegador. Por defecto lo descarga; con { blob: true } devuelve el archivo (para compartir) */
 async function descargarPDF(tipo, d, { blob = false } = {}) {
-  toast('Generando el PDF…');
+  if (!blob) toast('Generando el PDF…');
   let cont;
   try {
     await cargarPdfLib();
@@ -1145,78 +1196,102 @@ function telWhatsApp(t) {
   if (!intl && n.length === 9 && /^[6789]/.test(n)) n = '34' + n;
   return n;
 }
-/* Enviar un documento por correo (mailto) o por WhatsApp (wa.me / compartir el PDF en el móvil) */
+/* Enviar un documento por correo o por WhatsApp. Al abrir la ventana se genera el PDF, se guarda en el
+   almacenamiento privado y se añade al mensaje un enlace de descarga (los enlaces mailto: y wa.me no
+   admiten adjuntos). En el móvil también se puede compartir el archivo PDF adjunto directamente. */
+const PDF_PENDIENTE = '[Preparando el enlace al PDF…]';
+const DIAS_ENLACE_PDF = 60;
 function sendMail(tipo, d) {
   const cli = getCliente(d.clienteId) || {};
   const titulo = { cotizacion: 'Presupuesto', factura: 'Factura', abono: 'Recibo de pago' }[tipo];
   const ent = { cotizacion: 'Presupuesto', factura: 'Factura', abono: 'Cobro' }[tipo];
   const total = tipo === 'abono' ? d.valor : docTotals(d.items).total;
-  const saludo = cli.contacto || cli.razonSocial || '';
+  const saludo = cli.contacto || cli.nombreComercial || cli.razonSocial || '';
   const doc = `${tipo === 'factura' ? 'la' : 'el'} ${titulo.toLowerCase()} ${d.numero}${d.proyecto ? ` del proyecto "${d.proyecto}"` : ''} por importe de ${fmtMoney(total)}`;
   const firma = `${Store.user().nombre}\n${DB.empresa.razonSocial}`;
-  const txtMail = `Hola ${saludo},\n\nLe adjuntamos ${doc}.\n\nQuedamos a su disposición para cualquier consulta.\n\nUn saludo,\n${firma}`;
-  const txtWa = `Hola ${saludo}, le enviamos ${doc}.\n\nQuedamos a su disposición para cualquier consulta.\n\nUn saludo,\n${firma}`;
+  const txtMail = `Hola ${saludo},\n\nLe enviamos ${doc}.\n\n${PDF_PENDIENTE}\n\nQuedamos a su disposición para cualquier consulta.\n\nUn saludo,\n${firma}`;
+  const txtWa = `Hola ${saludo}, le enviamos ${doc}.\n\n${PDF_PENDIENTE}\n\nQuedamos a su disposición para cualquier consulta.\n\nUn saludo,\n${firma}`;
   const movil = esMovil() && typeof navigator.canShare === 'function';
+  let pdf = null, enlace = '', canal = 'mail';
   const marcarEnviado = (detalle) => {
     if (tipo === 'cotizacion' && d.estado === 'Borrador') d.estado = 'Enviado';
     audit('Enviar', ent, d.numero, detalle); persist(); setTimeout(route, 300);
   };
   const { el: ov, close } = modal({
-    title: `Enviar ${titulo} ${d.numero}`, okText: 'Abrir en correo',
+    title: `Enviar ${titulo} ${d.numero}`, okText: 'Preparando el PDF…',
     body: `<div class="seg" role="tablist" style="display:flex;gap:6px;margin-bottom:14px">
         <button type="button" class="btn sm primary" data-canal="mail">${ico('mail')}Correo</button>
         <button type="button" class="btn sm" data-canal="wa">${ICO_WA}WhatsApp</button></div>
       <div class="form-grid" data-panel="mail">
         <div class="f s12"><label>Para</label><input class="in" name="to" value="${esc(cli.email || '')}"></div>
         <div class="f s12"><label>Asunto</label><input class="in" name="sub" value="${esc(`${titulo} ${d.numero} - ${DB.empresa.razonSocial}`)}"></div>
-        <div class="f s12"><label>Mensaje</label><textarea class="in" name="msg" rows="7">${esc(txtMail)}</textarea></div>
-        <div class="f s12"><span class="hint">Se abrirá tu cliente de correo. Descarga el PDF con el botón "PDF" y adjúntalo al mensaje.</span></div></div>
+        <div class="f s12"><label>Mensaje</label><textarea class="in" name="msg" rows="8">${esc(txtMail)}</textarea></div></div>
       <div class="form-grid" data-panel="wa" hidden>
         <div class="f s12"><label>Teléfono móvil (WhatsApp)</label><input class="in" name="tel" inputmode="tel" value="${esc(cli.celular || cli.telefono || '')}" placeholder="Ej.: 612 345 678 o +34 612 345 678"></div>
-        <div class="f s12"><label>Mensaje</label><textarea class="in" name="wamsg" rows="7">${esc(txtWa)}</textarea></div>
-        ${movil ? `<div class="f s12"><button type="button" class="btn" id="waPdf" style="width:100%;justify-content:center">${ico('download')}Compartir el PDF (WhatsApp u otra app)</button>
-          <span class="hint">Genera el PDF y abre el menú de compartir del teléfono: elige WhatsApp y el contacto. El mensaje se envía junto al archivo.</span></div>` : ''}
-        <div class="f s12"><span class="hint">"Abrir WhatsApp" abre el chat con este número y el mensaje escrito${esMovil() ? '' : ' (WhatsApp Web o la aplicación de escritorio)'}. WhatsApp no permite adjuntar archivos desde un enlace: descarga el PDF y adjúntalo en el chat${movil ? ', o usa "Compartir el PDF"' : ''}.</span></div></div>`,
+        <div class="f s12"><label>Mensaje</label><textarea class="in" name="wamsg" rows="8">${esc(txtWa)}</textarea></div></div>
+      <div class="envio-pdf" id="envioPdf"><span class="spin"></span><span id="envioPdfTxt">Generando el PDF y su enlace de descarga…</span></div>
+      ${movil ? `<button type="button" class="btn" id="sharePdf" style="width:100%;justify-content:center;margin-top:10px" disabled>${ico('download')}Enviar con el PDF adjunto (WhatsApp, Gmail…)</button>
+        <span class="hint" style="display:block;margin-top:6px">Abre el menú de compartir del teléfono con el archivo PDF adjunto: elige WhatsApp, Gmail u otra app.</span>` : ''}`,
     onOk: (o) => {
+      if (!pdf && !enlace && $('#envioPdf', o).dataset.st !== 'error') { toast('Espera un momento: se está preparando el PDF.', 'bad'); return false; }
       if (canal === 'mail') {
-        const to = $('[name=to]', o).value, sub = $('[name=sub]', o).value, msg = $('[name=msg]', o).value;
+        const to = $('[name=to]', o).value, sub = $('[name=sub]', o).value, msg = limpiarPendiente($('[name=msg]', o).value);
         window.location.href = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(sub)}&body=${encodeURIComponent(msg)}`;
-        marcarEnviado('Enviado por correo a ' + to);
+        marcarEnviado(`Enviado por correo a ${to}${enlace ? ' con enlace al PDF' : ''}`);
         return;
       }
       const tel = telWhatsApp($('[name=tel]', o).value);
       if (tel.length < 10) { $('[name=tel]', o).classList.add('invalid'); toast('Indica un móvil válido, con prefijo si no es de España (p. ej. +57…).', 'bad'); return false; }
-      window.open(`https://wa.me/${tel}?text=${encodeURIComponent($('[name=wamsg]', o).value)}`, '_blank', 'noopener');
-      marcarEnviado('Enviado por WhatsApp a +' + tel);
+      window.open(`https://wa.me/${tel}?text=${encodeURIComponent(limpiarPendiente($('[name=wamsg]', o).value))}`, '_blank', 'noopener');
+      marcarEnviado(`Enviado por WhatsApp a +${tel}${enlace ? ' con enlace al PDF' : ''}`);
     },
   });
-  let canal = 'mail';
   const okBtn = $('[data-ok]', ov);
+  const textoOk = () => (canal === 'mail' ? 'Abrir en correo' : 'Abrir WhatsApp');
+  okBtn.disabled = true;
   ov.querySelectorAll('[data-canal]').forEach((b) => b.addEventListener('click', () => {
     canal = b.dataset.canal;
     ov.querySelectorAll('[data-canal]').forEach((x) => x.classList.toggle('primary', x === b));
     ov.querySelectorAll('[data-panel]').forEach((p) => { p.hidden = p.dataset.panel !== canal; });
-    okBtn.textContent = canal === 'mail' ? 'Abrir en correo' : 'Abrir WhatsApp';
+    if (!okBtn.disabled) okBtn.textContent = textoOk();
   }));
-  // Móvil: compartir el archivo PDF con el menú del sistema (WhatsApp, Telegram, Gmail…)
-  $('#waPdf', ov)?.addEventListener('click', async (e) => {
-    const btn = e.currentTarget;
-    if (btn.dataset.listo) return;
-    btn.disabled = true; btn.innerHTML = 'Generando el PDF…';
+  const ponerEnlace = (txt) => ov.querySelectorAll('[name=msg], [name=wamsg]').forEach((ta) => { ta.value = ta.value.replace(PDF_PENDIENTE, txt); });
+  const estado = (st, html) => { const el = $('#envioPdf', ov); el.dataset.st = st; $('#envioPdfTxt', ov).innerHTML = html; };
+  // Preparar PDF + enlace en cuanto se abre la ventana
+  (async () => {
     const r = await descargarPDF(tipo, d, { blob: true });
-    btn.disabled = false;
-    if (!r) { btn.innerHTML = `${ico('download')}Compartir el PDF (WhatsApp u otra app)`; return; }
-    if (!navigator.canShare({ files: [r.archivo] })) { btn.innerHTML = 'Este teléfono no permite compartir archivos'; btn.disabled = true; return; }
-    // compartir necesita un toque reciente del usuario: el PDF ya está listo, se pide un segundo toque
-    btn.dataset.listo = '1'; btn.classList.add('primary'); btn.innerHTML = `${ICO_WA}Compartir ${esc(r.nombre)}`;
-    btn.onclick = async () => {
+    if (!document.body.contains(ov)) return;
+    if (!r) {
+      ponerEnlace('');
+      estado('error', 'No se pudo generar el PDF: el mensaje se enviará sin él. Descárgalo con el botón "PDF" y adjúntalo a mano.');
+    } else {
+      pdf = r.archivo;
       try {
-        await navigator.share({ files: [r.archivo], title: `${titulo} ${d.numero}`, text: $('[name=wamsg]', ov).value });
-        marcarEnviado('PDF compartido desde el móvil (WhatsApp u otra app)'); close();
-      } catch (err) { if (err.name !== 'AbortError') toast('No se pudo compartir: ' + err.message, 'bad'); }
-    };
+        enlace = await Nube.subirEnvio(d.id, pdf, DIAS_ENLACE_PDF);
+        ponerEnlace(`Puede descargar el PDF aquí:\n${enlace}`);
+        estado('ok', `${ico('check')} PDF listo: <b>${esc(r.nombre)}</b>. El mensaje incluye un enlace de descarga válido ${DIAS_ENLACE_PDF} días.`);
+      } catch (e) {
+        ponerEnlace('');
+        estado('error', `No se pudo guardar el PDF para enlazarlo (${esc(e.message)}).${movil ? ' Usa "Enviar con el PDF adjunto".' : ' Descárgalo con el botón "PDF" y adjúntalo a mano.'}`);
+      }
+      const sh = $('#sharePdf', ov);
+      if (sh && navigator.canShare({ files: [pdf] })) sh.disabled = false;
+      else if (sh) { sh.hidden = true; sh.nextElementSibling.hidden = true; }
+    }
+    if (!document.body.contains(ov)) return;
+    okBtn.disabled = false; okBtn.textContent = textoOk();
+  })();
+  // Móvil: compartir el archivo PDF adjunto (WhatsApp, Gmail, Telegram…) con un solo toque
+  $('#sharePdf', ov)?.addEventListener('click', async () => {
+    if (!pdf) return;
+    const msg = $(canal === 'mail' ? '[name=msg]' : '[name=wamsg]', ov).value.replace(/\n*Puede descargar el PDF aquí:\n\S+/, '');
+    try {
+      await navigator.share({ files: [pdf], title: `${titulo} ${d.numero}`, text: limpiarPendiente(msg) });
+      marcarEnviado('PDF adjunto compartido desde el móvil (WhatsApp, correo u otra app)'); close();
+    } catch (err) { if (err.name !== 'AbortError') toast('No se pudo compartir: ' + err.message, 'bad'); }
   });
 }
+const limpiarPendiente = (t) => t.replace(`\n\n${PDF_PENDIENTE}`, '').replace(PDF_PENDIENTE, '');
 /* Logotipo de WhatsApp (trazo), mismo tamaño que los iconos de la app */
 const ICO_WA = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 20.5l1.3-4.2A8.5 8.5 0 1 1 8 19.3z"/><path d="M9 8.6c0 3.3 3 6.4 6.4 6.4l1.1-1.4-1.9-1-0.9.8c-1-.4-2-1.4-2.4-2.4l.8-.9-1-1.9z"/></svg>';
 function signDialog(tipo, d) {

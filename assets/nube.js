@@ -359,6 +359,15 @@ const Nube = (() => {
     },
     marcarGuardado(coll, obj) { SNAP[coll]?.set(obj.id, snapStr(obj)); },
     urlArchivo,
+    // Sube el PDF de un envío y devuelve un enlace de descarga firmado (por defecto 60 días)
+    async subirEnvio(docId, archivo, dias = 60) {
+      const path = `${DB.empresa.id}/envios/${docId}/${archivo.name.normalize('NFD').replace(/[^\w.\-]+/g, '_')}`;
+      const { error } = await sb.storage.from(NUBE_CFG.bucket).upload(path, archivo, { upsert: true, contentType: 'application/pdf' });
+      if (error) throw new Error(error.message);
+      const { data, error: e2 } = await sb.storage.from(NUBE_CFG.bucket).createSignedUrl(path, dias * 86400, { download: archivo.name });
+      if (e2) throw new Error(e2.message);
+      return data.signedUrl;
+    },
     fromUsuarioRow: (r) => ({ ...fromRow(SPECS.usuarios, r), authUserId: r.auth_user_id }),
   };
 })();

@@ -513,3 +513,14 @@ grant execute on function public.fac_mi_empresa() to authenticated;
 grant execute on function public.fac_permiso(text) to authenticated;
 grant execute on function public.fac_gestiona(text[]) to authenticated;
 grant execute on function public.fac_guardar_lineas(text, text, jsonb) to authenticated;
+
+-- ---------- PDF enviados por correo / WhatsApp ----------
+-- Ruta {empresa}/envios/{documento}/{archivo}.pdf; se comparten con un enlace firmado temporal.
+create policy fac_envios_insert on storage.objects for insert to authenticated
+  with check (bucket_id = 'fac-documentos' and (storage.foldername(name))[1] = public.fac_mi_empresa()::text
+    and (storage.foldername(name))[2] = 'envios' and public.fac_gestiona('cotizaciones', 'facturas', 'abonos'));
+create policy fac_envios_update on storage.objects for update to authenticated
+  using (bucket_id = 'fac-documentos' and (storage.foldername(name))[1] = public.fac_mi_empresa()::text
+    and (storage.foldername(name))[2] = 'envios' and public.fac_gestiona('cotizaciones', 'facturas', 'abonos'))
+  with check (bucket_id = 'fac-documentos' and (storage.foldername(name))[1] = public.fac_mi_empresa()::text
+    and (storage.foldername(name))[2] = 'envios');

@@ -60,8 +60,8 @@ const WORD_VARS = [
 ];
 const WORD_KNOWN = new Set(WORD_VARS.flatMap(([, l]) => l.flatMap(([k]) => k.replace(/^[#/]/, '').split(' / '))));
 
-const fmtNum = (n) => { const m = moneda(); return new Intl.NumberFormat(m.locale, { minimumFractionDigits: m.dec, maximumFractionDigits: m.dec }).format(+n || 0); };
-const fmtQty = (n) => new Intl.NumberFormat(moneda().locale, { maximumFractionDigits: 4 }).format(+n || 0);
+const fmtNum = (n) => fmtNumero(n, moneda().dec);
+const fmtQty = (n) => fmtNumero(n, 0, 4);
 const fmtDMY = (iso) => (iso ? iso.slice(0, 10).split('-').reverse().join('/') : '');
 
 /* Datos que recibe la plantilla */

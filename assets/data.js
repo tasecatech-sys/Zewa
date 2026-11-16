@@ -99,7 +99,31 @@ const MONEDAS = {
   MXN: { code: 'MXN', locale: 'es-MX', dec: 2, simbolo: '$', nombre: 'Peso mexicano (MXN)' },
 };
 const moneda = () => MONEDAS[(typeof DB !== 'undefined' && DB?.empresa?.moneda) || 'EUR'] || MONEDAS.EUR;
-const fmtMoney = (n) => { const m = moneda(); return new Intl.NumberFormat(m.locale, { style: 'currency', currency: m.code, minimumFractionDigits: m.dec, maximumFractionDigits: m.dec }).format(+n || 0); };
+/* Números al estilo español: punto para miles y coma para decimales (1.234,56), también con 4 cifras */
+const fmtNumero = (n, dMin = 2, dMax = dMin) => {
+  const v = Number(n) || 0;
+  const [ent, dec] = Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: dMin, maximumFractionDigits: dMax, useGrouping: false }).split('.');
+  return (v < 0 && (+ent || +dec) ? '-' : '') + ent.replace(/\B(?=(\d{3})+(?!\d))/g, '.') + (dec ? ',' + dec : '');
+};
+/* Lee lo que escribe el usuario: «1.234,56», «1234,56», «1234.56» o «1.500» (= mil quinientos) */
+const parseNum = (x) => {
+  if (typeof x === 'number') return isFinite(x) ? x : 0;
+  let t = String(x ?? '').trim().replace(/[\s\u00a0€$%]/g, '');
+  if (!t) return 0;
+  if (t.includes(',')) t = t.replace(/\./g, '').replace(',', '.');
+  else if (/^-?\d{1,3}(\.\d{3})+$/.test(t)) t = t.replace(/\./g, '');
+  const v = parseFloat(t);
+  return isFinite(v) ? v : 0;
+};
+/* Valor para mostrar dentro de un campo editable (sin decimales forzados) */
+const fmtInputNum = (n) => (n === '' || n === null || n === undefined ? '' : fmtNumero(parseNum(n), 0, 4));
+const fmtPct = (n) => fmtNumero(n, 0, 2) + '%';
+const fmtMoney = (n) => {
+  const m = moneda();
+  if (m.code === 'EUR') return `${fmtNumero(n, m.dec)}\u00a0€`;
+  if (m.code === 'COP') return `$\u00a0${fmtNumero(n, m.dec)}`;
+  return new Intl.NumberFormat(m.locale, { style: 'currency', currency: m.code, minimumFractionDigits: m.dec, maximumFractionDigits: m.dec }).format(+n || 0);
+};
 const fmtShort = (n) => {
   const a = Math.abs(n), m = moneda();
   const v = a >= 1e9 ? (n / 1e9).toFixed(1).replace('.', ',') + ' mil M' : a >= 1e6 ? (n / 1e6).toFixed(1).replace('.', ',') + ' M' : a >= 1e3 ? Math.round(n / 1e3) + ' mil' : String(Math.round(n));
