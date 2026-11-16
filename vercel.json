@@ -1,0 +1,5 @@
+{
+  "rewrites": [
+    { "source": "/d/:codigo", "destination": "https://ekjcdmxtzcpkbexilzrf.supabase.co/functions/v1/zewa-pdf?c=:codigo" }
+  ]
+}

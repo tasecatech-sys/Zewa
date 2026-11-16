@@ -359,14 +359,21 @@ const Nube = (() => {
     },
     marcarGuardado(coll, obj) { SNAP[coll]?.set(obj.id, snapStr(obj)); },
     urlArchivo,
-    // Sube el PDF de un envío y devuelve un enlace de descarga firmado (por defecto 60 días)
-    async subirEnvio(docId, archivo, dias = 60) {
-      const path = `${DB.empresa.id}/envios/${docId}/${archivo.name.normalize('NFD').replace(/[^\w.\-]+/g, '_')}`;
-      const { error } = await sb.storage.from(NUBE_CFG.bucket).upload(path, archivo, { upsert: true, contentType: 'application/pdf' });
+    // Sube el PDF de un envío y devuelve un enlace corto en el dominio de la app: https://<app>/d/<codigo>.
+    // El archivo se guarda con el código aleatorio como nombre (sin datos del cliente en la ruta) y el enlace
+    // queda registrado en fac_enlaces (caducidad, descargas, anulación). Vercel reenvía /d/* a la función zewa-pdf.
+    async subirEnvio(d, tipo, archivo, dias = 60) {
+      const abc = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+      const codigo = [...crypto.getRandomValues(new Uint8Array(14))].map((n) => abc[n % abc.length]).join('');
+      const path = `${DB.empresa.id}/envios/${codigo}.pdf`;
+      const { error } = await sb.storage.from(NUBE_CFG.bucket).upload(path, archivo, { upsert: false, contentType: 'application/pdf' });
       if (error) throw new Error(error.message);
-      const { data, error: e2 } = await sb.storage.from(NUBE_CFG.bucket).createSignedUrl(path, dias * 86400, { download: archivo.name });
+      const { error: e2 } = await sb.from('fac_enlaces').insert({
+        codigo, empresa_id: DB.empresa.id, documento_id: d.id, tipo, numero: d.numero || null, storage_path: path,
+        nombre_archivo: archivo.name, expira: new Date(Date.now() + dias * 86400000).toISOString(), creado_por: Store.user().nombre,
+      });
       if (e2) throw new Error(e2.message);
-      return data.signedUrl;
+      return `${location.origin}/d/${codigo}`;
     },
     fromUsuarioRow: (r) => ({ ...fromRow(SPECS.usuarios, r), authUserId: r.auth_user_id }),
   };
