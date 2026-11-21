@@ -32,9 +32,16 @@ const Nube = (() => {
     facturas: { table: 'fac_facturas', ret: 'numero', lineas: 'factura', plantilla: true, cols: [C('numero'), C('fecha', 'fecha', 'd'), C('fechaOperacion', 'fecha_operacion', 'd'), C('vence', 'vence', 'd'), C('clienteId', 'cliente_id', 'r'), C('cotizacionId', 'cotizacion_id', 'r'), C('metodoPago', 'metodo_pago'), C('banco'), C('titular'), C('cuenta'), C('observaciones'), C('estado'), C('firmas', 'firmas', 'j'), ...AUD], skip: ['items'] },
     abonos: { table: 'fac_abonos', ret: 'numero', plantilla: true, cols: [C('numero'), C('fecha', 'fecha', 'd'), C('clienteId', 'cliente_id', 'r'), C('cotizacionId', 'cotizacion_id', 'r'), C('facturaId', 'factura_id', 'r'), C('concepto'), C('referencia'), C('formaPago', 'forma_pago'), C('banco'), C('valor', 'valor', 'n'), C('estado'), C('firmas', 'firmas', 'j'), ...AUD] },
     documentos: { table: 'fac_documentos', versiones: 'documento', cols: [C('clienteId', 'cliente_id', 'r'), C('proyecto'), C('nombre'), C('mime'), C('categoria'), C('etiquetas', 'etiquetas', 'a'), C('creado', 'creado', 'ts'), C('creadoPor', 'creado_por')], skip: ['versiones'] },
+    // ---- finanzas (supabase_finanzas.sql) ----
+    proveedores: { table: 'fac_proveedores', fin: true, ret: 'codigo', cols: [C('codigo'), C('razonSocial', 'razon_social'), C('nit', 'nif'), C('email'), C('telefono'), C('categoria'), ...AUD] },
+    compras: { table: 'fac_compras', fin: true, ret: 'numero', cols: [C('numero'), C('numeroFactura', 'numero_factura'), C('fecha', 'fecha', 'd'), C('vence', 'vence', 'd'), C('proveedorId', 'proveedor_id', 'r'), C('categoria'), C('obraId', 'obra_id', 'r'), C('estado'), C('items', 'lineas', 'j'), ...AUD] },
+    empleados: { table: 'fac_empleados', fin: true, ret: 'codigo', cols: [C('codigo'), C('nombre'), C('nif'), C('puesto'), C('estado'), C('salarioBrutoAnual', 'salario_bruto_anual', 'n'), ...AUD] },
+    nominas: { table: 'fac_nominas', fin: true, cols: [C('periodo'), C('empleadoId', 'empleado_id', 'r'), C('obraId', 'obra_id', 'r'), C('estado'), ...AUD] },
+    movimientos: { table: 'fac_movimientos', fin: true, ret: 'numero', cols: [C('numero'), C('fecha', 'fecha', 'd'), C('tipo'), C('categoria'), C('concepto'), C('importe', 'importe', 'n'), C('cuenta'), C('compraId', 'compra_id', 'r'), C('nominaId', 'nomina_id', 'r'), C('obraId', 'obra_id', 'r'), C('referencia'), C('estado'), ...AUD] },
     auditoria: { table: 'fac_auditoria', insertOnly: true, noExtra: true, cols: [C('fecha', 'fecha', 'ts'), C('usuario'), C('rol'), C('accion'), C('entidad'), C('ref'), C('detalle'), C('cambios', 'cambios', 'j')] },
   };
-  const ORDEN = ['roles', 'usuarios', 'clientes', 'inventario', 'plantillas', 'cotizaciones', 'facturas', 'abonos', 'documentos', 'auditoria'];
+  const ORDEN = ['roles', 'usuarios', 'clientes', 'inventario', 'plantillas', 'cotizaciones', 'facturas', 'abonos', 'proveedores', 'compras', 'empleados', 'nominas', 'movimientos', 'documentos', 'auditoria'];
+  let finOK = true;       // false si aún no se ejecutó supabase_finanzas.sql (las tablas no existen)
   const EMPRESA_COLS = [C('razonSocial', 'razon_social'), C('nit', 'nif'), C('direccion'), C('codigoPostal', 'codigo_postal'), C('ciudad', 'localidad'), C('provincia'), C('pais'), C('telefono'), C('email'), C('banco'), C('titular'), C('cuenta'), C('moneda'), C('ivaDefault', 'iva_default', 'n')];
 
   const aCol = (v, tipo) => {
@@ -68,6 +75,7 @@ const Nube = (() => {
     if (row.permisos === null) row.permisos = {};
     // columnas obligatorias con valor por defecto: si vienen vacías, que las ponga el servidor
     ['creado', 'fecha', 'estado', 'sistema', 'activo'].forEach((c) => { if (row[c] === null) delete row[c]; });
+    if (row.lineas === null) row.lineas = [];
     return row;
   }
   function fromRow(spec, r) {
@@ -136,6 +144,14 @@ const Nube = (() => {
       fetchAll('fac_lineas', 'orden'), fetchAll('fac_abonos', 'creado'), fetchAll('fac_documentos', 'creado'),
       fetchAll('fac_documento_versiones', 'version'), fetchAll('fac_auditoria', 'fecha', false, 2000),
     ]);
+    // Tablas de finanzas: si todavía no existen en el servidor, la app funciona igual y avisa en esos módulos
+    const faltan = [];
+    const finTablas = ['proveedores', 'compras', 'empleados', 'nominas', 'movimientos'];
+    const fin = await Promise.all(finTablas.map((k) => fetchAll(SPECS[k].table, 'creado').catch((e) => {
+      if (/does not exist|could not find the table|schema cache/i.test(e.message)) { faltan.push(SPECS[k].table); return []; }
+      throw e;
+    })));
+    finOK = !faltan.length;
     const empresa = { id: emp.id, ...(emp.extra || {}) };
     EMPRESA_COLS.forEach((c) => { empresa[c.k] = aApp(emp[c.col], c.tipo); });
     const lin = { cotizacion: new Map(), factura: new Map() };
@@ -165,6 +181,7 @@ const Nube = (() => {
       }),
       auditoria: auditoria.map((r) => fromRow(SPECS.auditoria, r)),
     };
+    finTablas.forEach((k, i) => { db[k] = fin[i].map((r) => fromRow(SPECS[k], r)); });
     db.plantillas = db.plantillas.filter((p) => p.versiones.length);
     lastLoad = Date.now();
     return db;
@@ -177,6 +194,7 @@ const Nube = (() => {
     if (empStr() !== empSnap) { ups.push({ coll: 'empresa' }); empSnap = empStr(); }
     ORDEN.forEach((coll) => {
       const spec = SPECS[coll], snap = SNAP[coll], vivos = new Set();
+      if (spec.fin && !finOK) return; // sin tablas en el servidor: no se intenta guardar
       (DB[coll] || []).forEach((o) => {
         if (!o?.id) return;
         vivos.add(o.id);
@@ -231,6 +249,9 @@ const Nube = (() => {
     for (const g of grupos) {
       if (g.coll === 'empresa') {
         const row = {}; EMPRESA_COLS.forEach((c) => { row[c.col] = aCol(DB.empresa[c.k], c.tipo); });
+        // el resto de ajustes (parámetros fiscales y de tesorería) va en `extra`
+        const extra = { ...DB.empresa }; delete extra.id; EMPRESA_COLS.forEach((c) => delete extra[c.k]);
+        row.extra = JSON.parse(JSON.stringify(extra));
         row.actualizado = new Date().toISOString();
         const { error } = await sb.from('fac_empresas').update(row).eq('id', emp);
         if (error) throw new Error('Empresa: ' + error.message);
@@ -338,6 +359,7 @@ const Nube = (() => {
     sb,
     get ready() { return ready; },
     get yo() { return me; },
+    get finanzasListas() { return finOK; },
     async sesion() { const { data } = await sb.auth.getSession(); return data.session; },
     onAuth: (cb) => sb.auth.onAuthStateChange(cb),
     entrar, salir,
