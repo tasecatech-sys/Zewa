@@ -44,6 +44,7 @@ const ESTADO_CLASS = {
   Pendiente: 'b-warn', Enviada: 'b-warn', Enviado: 'b-warn', 'Por vencer': 'b-warn',
   Vencida: 'b-bad', Vencido: 'b-bad', Anulada: 'b-muted', Anulado: 'b-muted', Inactiva: 'b-muted',
   'En Proceso': 'b-info', Borrador: 'b-muted',
+  Pagado: 'b-ok', Alta: 'b-ok', Calculada: 'b-info', 'Pago parcial': 'b-info', 'Pendiente de pago': 'b-warn', Baja: 'b-muted',
 };
 const badge = (e) => `<span class="badge ${ESTADO_CLASS[e] || 'b-muted'}">${esc(e)}</span>`;
 const pageHead = (title, sub, actions = '', crumbs = '') => `<div class="page-head"><div>${crumbs ? `<div class="crumbs">${crumbs}</div>` : ''}<h1>${title}</h1>${sub ? `<p>${sub}</p>` : ''}</div><div class="btn-row">${actions}</div></div>`;
@@ -123,6 +124,12 @@ const NAV = [
   { h: 'cotizaciones', label: 'Presupuestos', icon: 'quote', count: () => DB.cotizaciones.filter((c) => ['Borrador', 'Enviado', 'Aprobado'].includes(cotEstado(c))).length },
   { h: 'abonos', label: 'Cobros', icon: 'cash' },
   { h: 'facturas', label: 'Facturación', icon: 'invoice', count: () => DB.facturas.filter((f) => ['Pendiente', 'Vencida', 'En Proceso'].includes(facturaEstado(f))).length },
+  { h: 'compras', label: 'Compras y gastos', icon: 'cart', group: 'Finanzas', count: () => DB.compras.filter((c) => ['Pendiente', 'Vencida', 'Pago parcial'].includes(compraEstado(c))).length || '' },
+  { h: 'nominas', label: 'Nóminas', icon: 'users' },
+  { h: 'tesoreria', label: 'Tesorería', icon: 'wallet' },
+  { h: 'obras', label: 'Costes de obra', icon: 'trend' },
+  { h: 'impuestos', label: 'Impuestos', icon: 'tag' },
+  { h: 'resultados', label: 'Balance y resultados', icon: 'layout' },
   { h: 'plantillas', label: 'Plantillas', icon: 'layout', group: 'Administración' },
   { h: 'documentos', label: 'Gestión documental', icon: 'folder' },
   { h: 'auditoria', label: 'Auditoría', icon: 'shield' },
@@ -136,7 +143,7 @@ function renderNav(active) {
   $('#nav').innerHTML = grupos.filter((n) => puedeVer(n.h)).map((n) => {
     const head = n.g !== last ? `<div class="nav-label">${n.g}</div>` : '';
     last = n.g;
-    return `${head}<a href="#/${n.h}" class="${active === n.h ? 'active' : ''}">${ico(n.icon)}<span>${n.label}</span>${n.count ? `<span class="count">${n.count()}</span>` : ''}</a>`;
+    return `${head}<a href="#/${n.h}" class="${active === n.h ? 'active' : ''}">${ico(n.icon)}<span>${n.label}</span>${n.count && n.count() !== '' ? `<span class="count">${n.count()}</span>` : ''}</a>`;
   }).join('');
 }
 
@@ -166,6 +173,12 @@ function route() {
     cotizaciones: () => (a === 'nueva' ? DocEditor('cotizacion', null, query) : a && b === 'editar' ? DocEditor('cotizacion', a) : a ? CotDetalle(a, query.tab) : Cotizaciones(query)),
     facturas: () => (a === 'nueva' ? DocEditor('factura', null, query) : a && b === 'editar' ? DocEditor('factura', a) : a ? FacDetalle(a, query.tab) : Facturas(query)),
     abonos: () => (a === 'nuevo' ? AbonoForm(query) : a ? AbonoDetalle(a) : Abonos()),
+    compras: () => (a === 'nueva' ? CompraForm(null, query) : a === 'proveedores' ? (b === 'nuevo' ? ProveedorForm() : b && parts[3] === 'editar' ? ProveedorForm(b) : b ? ProveedorDetalle(b) : Compras({ tab: 'proveedores' })) : a && b === 'editar' ? CompraForm(a) : a ? CompraDetalle(a) : Compras(query)),
+    nominas: () => (a === 'nueva' ? NominaForm(null, query) : a === 'empleados' ? (b === 'nuevo' ? EmpleadoForm() : b ? EmpleadoForm(b) : Nominas({ ...query, tab: 'empleados' })) : a && b === 'editar' ? NominaForm(a) : a ? NominaDetalle(a) : Nominas(query)),
+    tesoreria: () => Tesoreria(query),
+    obras: () => (a ? ObraDetalle(a) : Obras()),
+    impuestos: () => Impuestos(query),
+    resultados: () => Resultados(query),
     plantillas: () => (a ? PlantillaEditor(a, query) : Plantillas()),
     busqueda: () => Busqueda(query),
     documentos: () => Documentos(query),
@@ -412,7 +425,7 @@ const INVENTARIO_FIELDS = [
   ['nombre', 'Nombre', 's12', { req: 1 }],
   ['descripcion', 'Descripción', 's12', { textarea: 1 }],
   ['sec', 'Precios (sin impuestos)'],
-  ['costo', 'Costo', 's4', { req: 1, type: 'number' }],
+  ['costo', 'Coste', 's4', { req: 1, type: 'number' }],
   ['precioVenta', 'Precio de venta al público', 's4', { req: 1, type: 'number' }],
   ['iva', 'IVA % por defecto', 's4', { type: 'number' }],
   ['sec', 'Estado'],
@@ -431,7 +444,8 @@ function Inventario() {
       { k: 'nombre', label: 'Nombre', render: (i) => `<div class="strong">${esc(i.nombre)}</div><div class="muted">${esc(i.categoria || '')}</div>` },
       { k: 'tipo', label: 'Tipo', render: (i) => `<span class="tag">${i.tipo}</span>` },
       { k: 'unidad', label: 'Unidad' },
-      { k: 'costo', label: 'Costo', cls: 'num', sort: (i) => +i.costo, render: (i) => fmtMoney(i.costo) },
+      { k: 'costo', label: 'Coste', cls: 'num', sort: (i) => +i.costo, render: (i) => fmtMoney(i.costo) },
+      { k: 'medio', label: 'Coste medio compras', cls: 'num', sort: (i) => costesProducto(i.id).medio ?? -1, render: (i) => { const c = costesProducto(i.id); return c.medio === null ? '<span class="muted">—</span>' : `${fmtMoney(c.medio)}<div class="muted">${fmtNumero(c.cantidad, 0, 2)} ${esc(i.unidad)} comprados</div>`; }, csv: (i) => { const c = costesProducto(i.id); return c.medio === null ? '' : fmtNumero(c.medio); } },
       { k: 'precioVenta', label: 'Precio venta', cls: 'num', sort: (i) => +i.precioVenta, render: (i) => fmtMoney(i.precioVenta) },
       { k: 'margen', label: 'Margen', cls: 'num', sort: (i) => invMargen(i), render: (i) => `${invMargen(i).toFixed(0)}%` },
       { k: 'estado', label: 'Estado', render: (i) => badge(i.estado === 'Inactivo' ? 'Inactiva' : 'Activa') },
@@ -444,9 +458,13 @@ function InventarioForm(id) {
   if (denyGestionar('inventario', '/inventario')) return;
   const i = id ? getInvItem(id) : { codigo: '(se asigna al guardar)', tipo: 'Servicio', unidad: 'ud', iva: DB.empresa.ivaDefault ?? 21, estado: 'Activo' };
   if (id && !i) return notFound();
+  const cp = id ? costesProducto(id) : null;
   view.innerHTML = pageHead(id ? 'Editar ítem de inventario' : 'Nuevo ítem de inventario', 'El precio de venta se guarda sin impuestos: el IVA se aplica al presupuestar o facturar', '', `<a href="#/inventario">Inventario</a> / ${id ? esc(i.codigo) : 'Nuevo'}`) +
     `<form class="card card-pad" id="frm" novalidate><div class="form-grid">${INVENTARIO_FIELDS.map((f) => fieldHTML(f, i[f[0]])).join('')}</div>
-     <div class="btn-row" style="justify-content:flex-end;margin-top:18px"><a class="btn" href="#/inventario">Cancelar</a><button class="btn primary">${ico('check')}Guardar ítem</button></div></form>`;
+     <div class="btn-row" style="justify-content:flex-end;margin-top:18px"><a class="btn" href="#/inventario">Cancelar</a><button class="btn primary">${ico('check')}Guardar ítem</button></div></form>` +
+    (cp?.lineas.length ? `<div class="card mt"><div class="card-head"><div><h3>Coste según compras</h3><p>Coste medio ${fmtMoney(cp.medio)} · último ${fmtMoney(cp.ultimo)} (${fmtDate(cp.ultimaFecha)}) · margen con el coste medio ${+i.precioVenta > 0 ? fmtNumero(((+i.precioVenta - cp.medio) / +i.precioVenta) * 100, 1) + ' %' : '—'}</p></div></div>
+      <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Fecha</th><th>Compra</th><th>Proveedor</th><th class="num">Cantidad</th><th class="num">Coste unitario</th><th class="num">Base</th></tr></thead><tbody>${cp.lineas.slice().reverse().slice(0, 15).map(({ c, it, l }) => `<tr class="click" data-href="#/compras/${c.id}"><td>${fmtDate(c.fecha)}</td><td>${esc(c.numero)}</td><td>${esc(provNombre(c.proveedorId))}</td><td class="num">${fmtNumero(it.cantidad, 0, 3)}</td><td class="num">${fmtMoney(l.base / (+it.cantidad || 1))}</td><td class="num">${fmtMoney(l.base)}</td></tr>`).join('')}</tbody></table></div></div>` : '');
+  $$('tr[data-href]').forEach((tr) => tr.addEventListener('click', () => { location.hash = tr.dataset.href; }));
   const form = $('#frm');
   form.addEventListener('submit', (e) => {
     e.preventDefault();
@@ -464,7 +482,7 @@ function InventarioForm(id) {
   });
 }
 /* Selector de inventario, reutilizado en el editor de presupuestos/facturas */
-function inventoryPicker(onPick) {
+function inventoryPicker(onPick, { precio = 'precioVenta' } = {}) {
   const m = modal({
     title: 'Añadir desde inventario', size: 'lg', hideOk: true, cancelText: 'Cerrar',
     body: `<div class="search" style="margin-bottom:12px">${ico('search')}<input id="invq" type="search" placeholder="Buscar servicio o material…" autocomplete="off"></div><div id="invList"></div>`,
@@ -474,7 +492,7 @@ function inventoryPicker(onPick) {
     const rows = DB.inventario.filter((i) => i.estado !== 'Inactivo' && (!qq || norm([i.codigo, i.nombre, i.categoria, i.descripcion].join(' ')).includes(qq)));
     $('#invList', m.el).innerHTML = rows.length ? rows.map((i) => `<div class="inv-pick-row" data-id="${i.id}">
         <div><b>${esc(i.nombre)}</b> <span class="tag">${i.tipo}</span><div class="muted">${esc(i.descripcion || '')}</div></div>
-        <div class="num">${fmtMoney(i.precioVenta)}<div class="muted">/ ${esc(i.unidad)} · IVA ${i.iva ?? (DB.empresa.ivaDefault ?? 21)}%</div></div>
+        <div class="num">${fmtMoney(i[precio])}<div class="muted">${precio === 'costo' ? 'coste ' : ''}/ ${esc(i.unidad)} · IVA ${i.iva ?? (DB.empresa.ivaDefault ?? 21)}%</div></div>
         <button type="button" class="btn sm primary" data-pick="${i.id}">${ico('plus')}Añadir</button>
       </div>`).join('') : emptyState(DB.inventario.length ? 'Sin resultados en el inventario' : 'El inventario está vacío. Añade ítems desde el módulo Inventario.', 'search');
   };
@@ -603,7 +621,7 @@ function DocEditor(tipo, id, query = {}) {
   $('#items').addEventListener('click', (e) => { const b = e.target.closest('[data-del]'); if (!b) return; items.splice(+b.closest('tr').dataset.i, 1); if (!items.length) items.push(emptyItem()); renderItems(); });
   $('#addItem').addEventListener('click', () => { items.push(emptyItem()); renderItems(); $$('#items tr:last-child input')[0].focus(); });
   $('#addFromInv').addEventListener('click', () => inventoryPicker((it) => {
-    items.push({ concepto: it.nombre, descripcion: it.descripcion || '', cantidad: 1, valor: +it.precioVenta || 0, iva: it.iva ?? (DB.empresa.ivaDefault ?? 21), desc: 0 });
+    items.push({ concepto: it.nombre, descripcion: it.descripcion || '', cantidad: 1, valor: +it.precioVenta || 0, iva: it.iva ?? (DB.empresa.ivaDefault ?? 21), desc: 0, invId: it.id });
     renderItems(); window.__zwAutoguardar?.();
   }));
   form.clienteId.addEventListener('change', showCli);
@@ -1952,14 +1970,17 @@ function Config() {
   const E = DB.empresa;
   const puede = puedeGestionar('config');
   const F = [['sec', 'Datos del emisor'], ['razonSocial', 'Razón social', 's6'], ['nit', 'NIF / CIF', 's3'], ['telefono', 'Teléfono', 's3'], ['direccion', 'Dirección', 's6'], ['codigoPostal', 'Código postal', 's2'], ['ciudad', 'Localidad', 's2'], ['provincia', 'Provincia', 's2'], ['pais', 'País', 's3'], ['email', 'Correo', 's3'],
-    ['sec', 'Moneda e impuestos'], ['moneda', 'Moneda', 's3', { options: Object.keys(MONEDAS) }], ['ivaDefault', 'IVA por defecto (%)', 's3', { type: 'number' }], ['sec', 'Datos bancarios por defecto'], ['banco', 'Banco', 's3'], ['titular', 'Titular', 's3'], ['cuenta', 'Cuenta (IBAN)', 's6']];
+    ['sec', 'Moneda e impuestos'], ['moneda', 'Moneda', 's3', { options: Object.keys(MONEDAS) }], ['ivaDefault', 'IVA por defecto (%)', 's3', { type: 'number' }], ['tipoIS', 'Impuesto sobre Sociedades (%)', 's3', { type: 'number' }],
+    ['sec', 'Tesorería: saldo de partida'], ['tesFechaSaldo', 'Fecha del saldo inicial', 's3', { type: 'date' }], ['tesSaldoInicial', 'Saldo en bancos a esa fecha', 's3', { type: 'number' }], ['tesSaldoCaja', 'Efectivo en caja a esa fecha', 's3', { type: 'number' }],
+    ['sec', 'Nóminas: tipos de cotización (orientativos, revisar con la gestoría)'], ['ssTrabPct', '% SS a cargo del trabajador', 's3', { type: 'number' }], ['ssEmpPct', '% SS a cargo de la empresa', 's3', { type: 'number' }], ['ssAtPct', '% accidentes de trabajo (AT/EP)', 's3', { type: 'number' }], ['irpfDefault', '% IRPF por defecto', 's3', { type: 'number' }],
+    ['sec', 'Datos bancarios por defecto'], ['banco', 'Banco', 's3'], ['titular', 'Titular', 's3'], ['cuenta', 'Cuenta (IBAN)', 's6']];
   view.innerHTML = pageHead('Configuración', 'Datos de la empresa emisora, respaldo y restauración' + (puede ? '' : ' · solo lectura para tu rol')) +
     `<form class="card card-pad" id="frm"><fieldset ${puede ? '' : 'disabled'} style="border:0;padding:0;margin:0"><div class="form-grid">${F.map((f) => fieldHTML(f, E[f[0]])).join('')}</div>${puede ? `<div class="btn-row" style="justify-content:flex-end;margin-top:16px"><button class="btn primary">Guardar</button></div>` : ''}</fieldset></form>
     ${puede ? `<div class="card card-pad mt"><h3 style="font-size:15px;margin-bottom:6px">Respaldo de datos</h3><p class="hint" style="margin-top:0">Los datos se guardan en el servidor (Supabase) y los comparten todos los usuarios de la empresa. Puedes descargar una copia completa en JSON cuando quieras.</p>
     <div class="btn-row"><button class="btn" id="exp">${ico('download')}Exportar respaldo (.json)</button><label class="btn">${ico('upload')}Importar respaldo<input type="file" accept=".json" id="imp" hidden></label>
     ${localDataAnterior() ? `<button class="btn" id="mig">${ico('upload')}Pasar al servidor los datos de este navegador</button>` : ''}
     ${!DB.clientes.length && !DB.cotizaciones.length ? `<button class="btn" id="demo">${ico('plus')}Cargar datos de ejemplo</button>` : ''}</div>
-    <p class="hint">Importar reemplaza clientes, inventario, plantillas, presupuestos, cobros, facturas y documentos por los del archivo. Los usuarios, roles y datos de la empresa no se tocan.</p></div>` : ''}`;
+    <p class="hint">Importar reemplaza clientes, inventario, plantillas, presupuestos, cobros, facturas, documentos y (si el archivo los incluye) compras, proveedores, empleados, nóminas y movimientos de tesorería. Los usuarios, roles y datos de la empresa no se tocan.</p></div>` : ''}`;
   if (!puede) return;
   $('#frm').addEventListener('submit', (e) => {
     e.preventDefault();
@@ -1998,6 +2019,8 @@ function localDataAnterior() {
 function importarDatos(data, origen) {
   migrarLexicoES(data);
   ['clientes', 'inventario', 'plantillas', 'cotizaciones', 'facturas', 'abonos', 'documentos'].forEach((k) => { DB[k] = clone(data[k] || []); });
+  // finanzas: solo si el respaldo las trae (los respaldos anteriores a este módulo no las tienen)
+  if (Nube.finanzasListas) COLECCIONES_FIN.forEach((k) => { if (Array.isArray(data[k])) DB[k] = clone(data[k]); });
   DB.plantillas = DB.plantillas.filter((p) => p.versiones?.length);
   const ids = new Set(DB.auditoria.map((a) => a.id));
   DB.auditoria.push(...(data.auditoria || []).filter((a) => a.id && !ids.has(a.id)));

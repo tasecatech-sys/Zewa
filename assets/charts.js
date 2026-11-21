@@ -138,5 +138,40 @@ const Charts = (() => {
     });
   }
 
-  return { bars, area, stack, funnel };
+  /* Barras agrupadas: dos series (p. ej. entradas y salidas) con leyenda */
+  function bars2(el, { labels, series, fmt = fmtMoney, H = 230 }) {
+    const W = 560, P = { l: 52, r: 8, t: 12, b: 26 };
+    const max = niceMax(Math.max(0, ...series.flatMap((s) => s.values)));
+    const iw = W - P.l - P.r, ih = H - P.t - P.b, bw = iw / labels.length;
+    const barW = Math.min(16, (bw * 0.7) / series.length);
+    let g = '';
+    for (let i = 0; i <= 4; i++) {
+      const y = P.t + ih - (ih * i) / 4;
+      g += `<line class="gridline" x1="${P.l}" x2="${W - P.r}" y1="${y}" y2="${y}"/><text x="${P.l - 8}" y="${y + 4}" text-anchor="end">${fmtShort((max * i) / 4)}</text>`;
+    }
+    let b = '', hits = '';
+    labels.forEach((lab, i) => {
+      const x0 = P.l + bw * i + (bw - barW * series.length - 2 * (series.length - 1)) / 2;
+      series.forEach((s, k) => {
+        const v = Math.max(0, s.values[i] || 0), h = (v / max) * ih, x = x0 + k * (barW + 2), y = P.t + ih - h, r = Math.min(3, h / 2);
+        if (h > 0) b += `<path d="M${x},${P.t + ih} V${y + r} Q${x},${y} ${x + r},${y} H${x + barW - r} Q${x + barW},${y} ${x + barW},${y + r} V${P.t + ih} Z" style="fill:${s.color}"/>`;
+      });
+      hits += `<rect class="hit" data-i="${i}" x="${P.l + bw * i}" y="${P.t}" width="${bw}" height="${ih}"/>`;
+      g += `<text x="${P.l + bw * i + bw / 2}" y="${H - 8}" text-anchor="middle">${lab}</text>`;
+    });
+    el.classList.add('chart');
+    el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img"><g class="axis">${g}</g>${b}<line x1="${P.l}" x2="${W - P.r}" y1="${P.t + ih}" y2="${P.t + ih}" style="stroke:var(--border-strong)"/>${hits}</svg>
+      <div class="legend" style="padding:8px 0 0">${series.map((s) => `<span><i style="background:${s.color}"></i>${s.label}</span>`).join('')}</div>`;
+    const T = tip(el);
+    el.querySelectorAll('.hit').forEach((h) => {
+      h.addEventListener('mousemove', () => {
+        const i = +h.dataset.i, s = scaleOf(el, W);
+        const top = Math.max(...series.map((x) => x.values[i] || 0));
+        T.show(`<span class="muted">${labels[i]}</span>${series.map((x) => `<div>${x.label}: <b style="display:inline">${fmt(x.values[i] || 0)}</b></div>`).join('')}`, (P.l + bw * i + bw / 2) * s, (P.t + ih - (Math.max(0, top) / max) * ih) * s);
+      });
+      h.addEventListener('mouseleave', T.hide);
+    });
+  }
+
+  return { bars, bars2, area, stack, funnel };
 })();

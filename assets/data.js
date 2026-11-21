@@ -14,6 +14,12 @@ const MODULOS = [
   { k: 'cotizaciones', label: 'Presupuestos' },
   { k: 'abonos', label: 'Cobros' },
   { k: 'facturas', label: 'Facturación' },
+  { k: 'compras', label: 'Compras y gastos' },
+  { k: 'nominas', label: 'Nóminas' },
+  { k: 'tesoreria', label: 'Tesorería (flujo de caja)' },
+  { k: 'obras', label: 'Costes de obra' },
+  { k: 'impuestos', label: 'Impuestos' },
+  { k: 'resultados', label: 'Balance y resultados' },
   { k: 'plantillas', label: 'Plantillas' },
   { k: 'documentos', label: 'Gestión documental' },
   { k: 'auditoria', label: 'Auditoría' },
@@ -29,8 +35,8 @@ function defaultRoles() {
   const todoGestionar = {}; MODULOS.forEach((m) => { todoGestionar[m.k] = 'gestionar'; });
   return [
     { id: 'rol_admin', nombre: 'Administrador', descripcion: 'Acceso completo a todos los módulos, incluida la gestión de usuarios y permisos.', sistema: true, permisos: todoGestionar },
-    { id: 'rol_comercial', nombre: 'Comercial', descripcion: 'Clientes, inventario y presupuestos. Solo lectura de facturación.', sistema: false, permisos: { dashboard: 'ver', busqueda: 'ver', clientes: 'gestionar', inventario: 'ver', cotizaciones: 'gestionar', abonos: 'gestionar', facturas: 'ver', plantillas: 'ninguno', documentos: 'gestionar', auditoria: 'ninguno', usuarios: 'ninguno', config: 'ninguno' } },
-    { id: 'rol_contable', nombre: 'Contabilidad', descripcion: 'Facturación, cobros y auditoría. Solo lectura de clientes y presupuestos.', sistema: false, permisos: { dashboard: 'ver', busqueda: 'ver', clientes: 'ver', inventario: 'ver', cotizaciones: 'ver', abonos: 'gestionar', facturas: 'gestionar', plantillas: 'ninguno', documentos: 'ver', auditoria: 'ver', usuarios: 'ninguno', config: 'ninguno' } },
+    { id: 'rol_comercial', nombre: 'Comercial', descripcion: 'Clientes, inventario y presupuestos. Solo lectura de facturación.', sistema: false, permisos: { dashboard: 'ver', busqueda: 'ver', clientes: 'gestionar', inventario: 'ver', cotizaciones: 'gestionar', abonos: 'gestionar', facturas: 'ver', compras: 'ninguno', nominas: 'ninguno', tesoreria: 'ninguno', obras: 'ver', impuestos: 'ninguno', resultados: 'ninguno', plantillas: 'ninguno', documentos: 'gestionar', auditoria: 'ninguno', usuarios: 'ninguno', config: 'ninguno' } },
+    { id: 'rol_contable', nombre: 'Contabilidad', descripcion: 'Facturación, cobros, compras, nóminas, tesorería e impuestos. Solo lectura de clientes y presupuestos.', sistema: false, permisos: { dashboard: 'ver', busqueda: 'ver', clientes: 'ver', inventario: 'ver', cotizaciones: 'ver', abonos: 'gestionar', facturas: 'gestionar', compras: 'gestionar', nominas: 'gestionar', tesoreria: 'gestionar', obras: 'ver', impuestos: 'gestionar', resultados: 'ver', plantillas: 'ninguno', documentos: 'ver', auditoria: 'ver', usuarios: 'ninguno', config: 'ninguno' } },
   ];
 }
 function defaultUsuarios() {
@@ -81,6 +87,20 @@ Los retrasos derivados de la falta de suministro de materiales, decisiones pendi
 
 3. MODIFICACIONES, TRABAJOS ADICIONALES Y PLAZOS DE EJECUCIÓN
 El presente presupuesto contempla únicamente los trabajos y suministros expresamente detallados en sus partidas. Cualquier modificación solicitada por el cliente, así como los trabajos adicionales que puedan surgir durante la ejecución de la obra y que no estuvieran contemplados inicialmente, deberán valorarse y comunicarse previamente para su aceptación. Estas modificaciones podrán implicar ajustes en el importe final y en los plazos de ejecución. La fecha de inicio y el plazo estimado de ejecución se concretarán una vez formalizada la reserva y definidos los aspectos necesarios del proyecto. Los plazos podrán verse modificados por imprevistos técnicos, cambios solicitados por el cliente, retrasos en el suministro de materiales o circunstancias ajenas al control de Zewá Reformas. En caso de incumplimiento de los plazos de pago acordados, Zewá Reformas se reserva el derecho de suspender temporalmente los trabajos, previa comunicación al cliente, hasta que se regularicen los importes pendientes. Esta suspensión podrá implicar una reprogramación de la obra y de su fecha de finalización.`;
+
+/* ---------- finanzas: compras, nóminas, tesorería e impuestos (ver assets/finanzas.js) ---------- */
+const COLECCIONES_FIN = ['proveedores', 'compras', 'empleados', 'nominas', 'movimientos'];
+/* Parámetros fiscales por defecto (España). Orientativos: se ajustan en Configuración con la gestoría. */
+const FISCAL_DEFAULT = {
+  tesSaldoInicial: 0,          // saldo en bancos en la fecha indicada
+  tesSaldoCaja: 0,             // efectivo en caja en la misma fecha
+  tesFechaSaldo: new Date().getFullYear() + '-01-01',
+  tipoIS: 25,                  // Impuesto sobre Sociedades (general 25 %; empresas de reducida dimensión pueden tener menos)
+  ssTrabPct: 6.5,              // cuota obrera: contingencias comunes 4,70 + desempleo 1,55 + FP 0,10 + MEI 0,15
+  ssEmpPct: 30.65,             // cuota patronal: contingencias comunes 23,60 + desempleo 5,50 + FOGASA 0,20 + FP 0,60 + MEI 0,75
+  ssAtPct: 6.7,                // accidentes de trabajo y enfermedades profesionales (según CNAE; construcción ≈ 6,70)
+  irpfDefault: 15,             // retención por defecto a trabajadores (depende de cada persona)
+};
 
 /* ---------- identidad visual Zewá ---------- */
 const ZEWA_COLORES = { azul: '#283d6a', dorado: '#c19c73', linea: '#b8a48f' };
@@ -142,9 +162,9 @@ let DB;
 const Store = {
   /* Completa valores por defecto tras cargar desde el servidor */
   prepare() {
-    DB.empresa = { moneda: 'EUR', ivaDefault: 21, pais: 'España', codigoPostal: '', provincia: '', ...DB.empresa };
-    ['clientes', 'cotizaciones', 'abonos', 'facturas', 'plantillas', 'documentos', 'auditoria', 'inventario', 'roles', 'usuarios'].forEach((k) => { DB[k] = DB[k] || []; });
-    DB.seq = { COT: 0, FAC: 0, ABO: 0, CLI: 0, INV: 0, USR: 0, ...DB.seq };
+    DB.empresa = { moneda: 'EUR', ivaDefault: 21, pais: 'España', codigoPostal: '', provincia: '', ...FISCAL_DEFAULT, ...DB.empresa };
+    ['clientes', 'cotizaciones', 'abonos', 'facturas', 'plantillas', 'documentos', 'auditoria', 'inventario', 'roles', 'usuarios', ...COLECCIONES_FIN].forEach((k) => { DB[k] = DB[k] || []; });
+    DB.seq = { COT: 0, FAC: 0, ABO: 0, CLI: 0, INV: 0, USR: 0, COM: 0, PRV: 0, EMP: 0, MOV: 0, ...DB.seq };
     migrarLexicoES(DB);
     this.syncSeq();
     return DB;
@@ -163,14 +183,18 @@ const Store = {
     S.CLI = Math.max(S.CLI || 0, max(DB.clientes, 'codigo', 'CLI', false));
     S.INV = Math.max(S.INV || 0, max(DB.inventario, 'codigo', 'INV', false));
     S.USR = Math.max(S.USR || 0, max(DB.usuarios, 'codigo', 'USR', false));
+    S.COM = Math.max(S.COM || 0, max(DB.compras || [], 'numero', 'COM', true));
+    S.MOV = Math.max(S.MOV || 0, max(DB.movimientos || [], 'numero', 'MOV', true));
+    S.PRV = Math.max(S.PRV || 0, max(DB.proveedores || [], 'codigo', 'PRV', false));
+    S.EMP = Math.max(S.EMP || 0, max(DB.empleados || [], 'codigo', 'EMP', false));
   },
   save() { return Nube.persist(); },
   user() { return DB.usuarios.find((u) => u.id === DB.usuarioActual) || { id: '', nombre: 'Sistema', rolId: '' }; },
   nextNumber(tipo) {
     const year = new Date().getFullYear();
-    const pref = { COT: 'PRE', FAC: 'FAC', ABO: 'REC', CLI: 'CLI', INV: 'INV', USR: 'USR' }[tipo];
+    const pref = { COT: 'PRE', FAC: 'FAC', ABO: 'REC', CLI: 'CLI', INV: 'INV', USR: 'USR', COM: 'COM', MOV: 'MOV', PRV: 'PRV', EMP: 'EMP' }[tipo];
     DB.seq[tipo] = (DB.seq[tipo] || 0) + 1;
-    return ['CLI', 'INV', 'USR'].includes(tipo) ? `${pref}-${String(DB.seq[tipo]).padStart(4, '0')}` : `${pref}-${year}-${String(DB.seq[tipo]).padStart(4, '0')}`;
+    return ['CLI', 'INV', 'USR', 'PRV', 'EMP'].includes(tipo) ? `${pref}-${String(DB.seq[tipo]).padStart(4, '0')}` : `${pref}-${year}-${String(DB.seq[tipo]).padStart(4, '0')}`;
   },
 };
 
@@ -192,7 +216,7 @@ function migrarLexicoES(db) {
 /* ---------- permisos ---------- */
 const getRol = (id) => DB.roles.find((r) => r.id === id);
 const rolDe = (u) => getRol(u?.rolId) || DB.roles[0];
-const permisoModulo = (modulo, u = Store.user()) => rolDe(u)?.permisos?.[modulo] || 'ninguno';
+const permisoModulo = (modulo, u = Store.user()) => { const r = rolDe(u); return r?.permisos?.[modulo] || (r?.sistema ? 'gestionar' : 'ninguno'); };
 const puedeVer = (modulo, u) => permisoModulo(modulo, u) !== 'ninguno';
 const puedeGestionar = (modulo, u) => permisoModulo(modulo, u) === 'gestionar';
 /* Simula si, tras aplicar nuevosPermisos al rol rolId, seguiría habiendo algún usuario activo
@@ -315,6 +339,7 @@ function seed() {
     version: 1, lexico: 'es-ES', usuarioActual: 'admin', seq: { COT: 0, FAC: 0, ABO: 0, CLI: 0, INV: 0, USR: 3 },
     empresa: { razonSocial: 'ZEWÁ REFORMAS', nit: 'B00000000', direccion: 'Calle Ejemplo, 1', ciudad: 'Madrid', codigoPostal: '28001', provincia: 'Madrid', pais: 'España', moneda: 'EUR', ivaDefault: 21, telefono: '641 486 231', email: 'zewareformas@gmail.com', banco: 'CaixaBank', titular: 'ZEWÁ REFORMAS', cuenta: 'ES00 0000 0000 0000 0000 0000' },
     clientes: [], cotizaciones: [], abonos: [], facturas: [], plantillas: [], documentos: [], auditoria: [], inventario: [],
+    proveedores: [], compras: [], empleados: [], nominas: [], movimientos: [],
     roles: defaultRoles(), usuarios: defaultUsuarios(),
   };
   DB = db;
@@ -386,6 +411,65 @@ function seed() {
   k = mkCot(c2, -50, 'Local nuevo – reforma', [svc.electricidad, { ...svc.pintura, cantidad: 150 }], 'Enviado');
   k = mkCot(c1, -3, 'Pintura de fachada', [{ ...svc.pintura, concepto: 'Pintura de fachada (m²)', descripcion: 'Pintura pétrea, incluye andamio', cantidad: 200, valor: 14 }], 'Enviado'); k.vence = iso(27);
 
+  // Finanzas de ejemplo: proveedores, compras imputadas a obras, empleados, nóminas y pagos
+  const mkPrv = (o) => { const p = { id: uid('prv'), codigo: Store.nextNumber('PRV'), tipo: 'Empresa', diasPago: 30, retencionTipo: '', creado: new Date(now - 190 * 864e5).toISOString(), creadoPor: 'Administrador', ...o }; db.proveedores.push(p); return p; };
+  const pMat = mkPrv({ razonSocial: 'Almacenes Cerámicos del Centro S.L.', nit: 'B28456123', categoria: 'Materiales', telefono: '915 55 22 10', email: 'pedidos@ceramicascentro.es', ciudad: 'Getafe', provincia: 'Madrid' });
+  const pEle = mkPrv({ razonSocial: 'Electro Suministros Ibérica S.A.', nit: 'A28999888', categoria: 'Materiales', telefono: '916 44 33 22', email: 'ventas@electroiberica.es', ciudad: 'Alcobendas', provincia: 'Madrid' });
+  const pSub = mkPrv({ razonSocial: 'Fontanería Hermanos Ruiz S.L.', nit: 'B86111222', categoria: 'Subcontratas', telefono: '622 111 333', email: 'admin@fontaneriaruiz.es', ciudad: 'Madrid', provincia: 'Madrid' });
+  const pAse = mkPrv({ razonSocial: 'Elena Martín Asesores', nit: '50123456K', tipo: 'Autónomo', categoria: 'Asesoría y gestoría', retencionTipo: 'prof', telefono: '600 222 444', email: 'elena@martinasesores.es', ciudad: 'Madrid', provincia: 'Madrid' });
+  const pAlq = mkPrv({ razonSocial: 'Inmuebles Prado S.L.', nit: 'B84777666', categoria: 'Alquiler de local', retencionTipo: 'alq', diasPago: 5, ciudad: 'Madrid', provincia: 'Madrid' });
+  const pGas = mkPrv({ razonSocial: 'Estación de Servicio Castellana', nit: 'B81222333', categoria: 'Combustible', diasPago: 0 });
+  const inv = (nombre) => db.inventario.find((i) => i.nombre.startsWith(nombre));
+  const pagos = [];
+  const mkCom = (prov, off, numFra, items, extra = {}) => {
+    const c = { id: uid('com'), numero: Store.nextNumber('COM'), numeroFactura: numFra, fecha: iso(off), vence: iso(off + (prov.diasPago ?? 30)), proveedorId: prov.id, categoria: prov.categoria, obraId: '', items, retencionTipo: prov.retencionTipo || '', retencionPct: prov.retencionTipo === 'prof' ? 15 : prov.retencionTipo === 'alq' ? 19 : 0, ivaNoDeducible: false, formaPago: 'Transferencia', observaciones: '', estado: 'Registrada', creado: new Date(now.getTime() + off * 864e5).toISOString(), creadoPor: 'Carlos Ruiz', ...extra };
+    db.compras.push(c); return c;
+  };
+  const pagar = (c, off, cuenta = 'Banco') => {
+    const t = docTotals(c.items), ret = c.retencionTipo ? Math.round(t.base * c.retencionPct) / 100 : 0;
+    pagos.push({ fecha: iso(off), tipo: 'Salida', categoria: 'Pago a proveedor', concepto: `Pago ${db.proveedores.find((p) => p.id === c.proveedorId).razonSocial} · Fra. ${c.numeroFactura}`, importe: Math.round((t.total - ret) * 100) / 100, cuenta, compraId: c.id, obraId: c.obraId });
+  };
+  const obras = db.cotizaciones.filter((c) => ['Aprobado', 'Facturado'].includes(c.estado));
+  obras.forEach((o, k) => {
+    const off = Math.round((Date.parse(o.fecha) - now) / 864e5) + 6;
+    const mat = mkCom(k % 2 ? pEle : pMat, off, `${k % 2 ? 'EL' : 'AC'}-${2026}/${String(140 + k).padStart(4, '0')}`, k % 2
+      ? [{ concepto: 'Cuadro eléctrico 12 módulos', cantidad: 2, valor: 58, desc: 0, iva: 21, invId: inv('Cuadro')?.id }, { concepto: 'Cable 2,5 mm² (rollo 100 m)', cantidad: 4, valor: 46, desc: 5, iva: 21 }]
+      : [{ concepto: 'Azulejo cerámico 30x60', cantidad: 30, valor: 8.6, desc: 0, iva: 21, invId: inv('Azulejo')?.id }, { concepto: 'Pintura plástica blanca', cantidad: 40, valor: 3.9, desc: 0, iva: 21, invId: inv('Pintura plástica')?.id }], { obraId: o.id });
+    if (off + 25 < 0) pagar(mat, off + 25);
+    if (k % 3 === 0) { const sub = mkCom(pSub, off + 10, `FHR-${String(30 + k).padStart(3, '0')}`, [{ concepto: 'Instalación de fontanería (subcontrata)', cantidad: 1, valor: 680, desc: 0, iva: 21 }], { obraId: o.id }); if (off + 40 < 0) pagar(sub, off + 40); }
+  });
+  for (let m = 5; m >= 0; m--) {
+    const off = -m * 30 - 3;
+    const a = mkCom(pAlq, off, `ALQ-${m}`, [{ concepto: 'Alquiler de nave-almacén', cantidad: 1, valor: 900, desc: 0, iva: 21 }]); if (m > 0) pagar(a, off + 2);
+    const g = mkCom(pGas, off + 8, `T-${5520 + m}`, [{ concepto: 'Gasóleo furgonetas', cantidad: 1, valor: 210, desc: 0, iva: 21 }], { formaPago: 'Tarjeta' }); pagar(g, off + 8);
+    if (m % 3 === 0) { const s = mkCom(pAse, off + 12, `EM-${26}/${m}`, [{ concepto: 'Asesoría fiscal, laboral y contable (trimestre)', cantidad: 1, valor: 450, desc: 0, iva: 21 }]); if (m > 0) pagar(s, off + 20); }
+  }
+  const mkEmp = (o) => { const e = { id: uid('emp'), codigo: Store.nextNumber('EMP'), estado: 'Alta', pagas: '14 pagas', tipoContrato: 'Indefinido', jornada: 'Completa', fechaAlta: iso(-400), complementos: 0, creado: new Date(now - 400 * 864e5).toISOString(), creadoPor: 'Administrador', ...o }; db.empleados.push(e); return e; };
+  const emps = [
+    mkEmp({ nombre: 'Javier Moreno Sánchez', nif: '05432198M', naf: '28/12345678/90', puesto: 'Oficial de 1.ª albañil', grupoCotizacion: '8 · Oficiales de 1.ª y 2.ª', salarioBrutoAnual: 25200, irpfPct: 12 }),
+    mkEmp({ nombre: 'Andrea López Gil', nif: 'Y1234567X', naf: '28/23456789/01', puesto: 'Oficial de 2.ª pintora', grupoCotizacion: '8 · Oficiales de 1.ª y 2.ª', salarioBrutoAnual: 21000, irpfPct: 9, pagas: '14 pagas prorrateadas' }),
+    mkEmp({ nombre: 'Rubén Díaz Ortega', nif: '47852369T', naf: '28/34567890/12', puesto: 'Peón', grupoCotizacion: '10 · Peones', salarioBrutoAnual: 17500, irpfPct: 4, tipoContrato: 'Fijo discontinuo', complementos: 60 }),
+  ];
+  const cfgSS = { ssTrabPct: FISCAL_DEFAULT.ssTrabPct, ssEmpPct: FISCAL_DEFAULT.ssEmpPct, ssAtPct: FISCAL_DEFAULT.ssAtPct };
+  for (let m = 3; m >= 0; m--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - m, 15), per = d.toISOString().slice(0, 7);
+    emps.forEach((e, k) => {
+      const anual = e.salarioBrutoAnual, modo = /prorrate/.test(e.pagas) ? '14p' : '14', mes = d.getMonth() + 1;
+      const n = { id: uid('nom'), periodo: per, empleadoId: e.id, obraId: obras[(obras.length - 1 - k - m + 20) % obras.length]?.id || '', obraPct: 25, salarioBase: Math.round(anual / 14 * 100) / 100, complementos: e.complementos, horasExtra: k === 0 && m === 1 ? 120 : 0, pagaExtra: modo === '14p' ? Math.round(anual / 84 * 100) / 100 : (mes === 6 || mes === 12) ? Math.round(anual / 14 * 100) / 100 : 0, dietas: k === 2 ? 45 : 0, otrasDeducciones: 0, prorrataCC: Math.round(anual / 84 * 100) / 100, irpfPct: e.irpfPct, ...cfgSS, estado: 'Calculada', creado: d.toISOString(), creadoPor: 'Carlos Ruiz' };
+      db.nominas.push(n);
+      if (m > 0) {
+        const dev = n.salarioBase + n.complementos + n.horasExtra + n.pagaExtra + n.dietas, base = n.salarioBase + n.complementos + n.horasExtra + n.prorrataCC;
+        const liq = Math.round((dev - Math.round(base * n.ssTrabPct) / 100 - Math.round((dev - n.dietas) * n.irpfPct) / 100) * 100) / 100;
+        pagos.push({ fecha: new Date(d.getFullYear(), d.getMonth() + 1, 0, 12).toISOString().slice(0, 10), tipo: 'Salida', categoria: 'Nómina', concepto: `Nómina ${per} · ${e.nombre}`, importe: liq, cuenta: 'Banco', nominaId: n.id, obraId: n.obraId });
+      }
+    });
+  }
+  pagos.push({ fecha: iso(-150), tipo: 'Entrada', categoria: 'Préstamo recibido', concepto: 'Préstamo ICO furgoneta', importe: 18000, cuenta: 'Banco' });
+  for (let m = 4; m >= 0; m--) pagos.push({ fecha: iso(-m * 30 - 1), tipo: 'Salida', categoria: 'Cuota de préstamo', concepto: 'Cuota préstamo ICO', importe: 345.2, cuenta: 'Banco' });
+  for (let m = 5; m >= 0; m--) pagos.push({ fecha: iso(-m * 30 - 2), tipo: 'Salida', categoria: 'Comisiones bancarias', concepto: 'Comisión de mantenimiento', importe: 15, cuenta: 'Banco' });
+  pagos.filter((x) => x.fecha <= iso(0)).sort((a, b) => a.fecha.localeCompare(b.fecha)).forEach((x) => db.movimientos.push({ id: uid('mov'), numero: Store.nextNumber('MOV'), compraId: '', nominaId: '', obraId: '', referencia: '', estado: 'Aplicado', creado: new Date(x.fecha + 'T12:00:00').toISOString(), creadoPor: 'Carlos Ruiz', ...x }));
+  db.empresa = { ...db.empresa, ...FISCAL_DEFAULT, tesFechaSaldo: iso(-200), tesSaldoInicial: 12000, tesSaldoCaja: 300 };
+
   // Documentos libres de ejemplo
   db.documentos.push({ id: uid('doc'), nombre: 'Contrato de obra.pdf', mime: 'application/pdf', categoria: 'Contrato', clienteId: c1.id, proyecto: 'Reforma de oficinas centrales', etiquetas: ['contrato', 'firmado'], versiones: [{ v: 1, fecha: new Date(now - 168 * 864e5).toISOString(), usuario: 'Administrador', size: 182000, data: '' }], creado: new Date(now - 168 * 864e5).toISOString() });
   db.documentos.push({ id: uid('doc'), nombre: 'Escrituras Café Origen.pdf', mime: 'application/pdf', categoria: 'Documento legal', clienteId: c2.id, proyecto: '', etiquetas: ['escrituras'], versiones: [{ v: 1, fecha: new Date(now - 150 * 864e5).toISOString(), usuario: 'Laura Gómez', size: 96000, data: '' }, { v: 2, fecha: new Date(now - 20 * 864e5).toISOString(), usuario: 'Laura Gómez', size: 98000, data: '' }], creado: new Date(now - 150 * 864e5).toISOString() });
@@ -397,6 +481,7 @@ function seed() {
   db.cotizaciones.forEach((c) => pushAu(c.creado, c.creadoPor, 'Crear', 'Presupuesto', c.numero, c.proyecto));
   db.facturas.forEach((f) => pushAu(f.creado, f.creadoPor, 'Convertir', 'Factura', f.numero, 'Generada desde ' + getCot(f.cotizacionId).numero));
   db.abonos.forEach((a) => pushAu(a.creado, a.creadoPor, 'Registrar', 'Cobro', a.numero, `${a.concepto} · ${fmtMoney(a.valor)}`));
+  db.compras.forEach((c) => pushAu(c.creado, c.creadoPor, 'Crear', 'Compra', c.numero, `Fra. ${c.numeroFactura} · ${fmtMoney(docTotals(c.items).total)}`));
   db.auditoria.sort((a, b) => b.fecha.localeCompare(a.fecha));
   return db;
 }

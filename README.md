@@ -21,6 +21,23 @@ HTML + CSS + JavaScript sin frameworks ni dependencias. Abre `index.html` desde 
 
 Además: modo oscuro, diseño adaptable (escritorio, tablet y móvil), tablas con orden, filtros, paginación y exportación a CSV, selector de usuario para simular roles, y respaldo/importación en JSON (`#/config`).
 
+## Finanzas: compras, nóminas, tesorería, impuestos y resultados
+
+| Módulo | Ruta | Qué incluye |
+|--------|------|-------------|
+| Compras y gastos | `#/compras` | Facturas recibidas, tiques y gastos por categoría; proveedores; imputación a obra o a gastos generales; retención IRPF (profesionales 15 %, alquileres 19 %); IVA no deducible; pagos parciales; actualiza el coste del inventario |
+| Nóminas | `#/nominas` | Fichas de empleados (DNI/NIE, nº SS, contrato, salario anual, 12/14 pagas); generación mensual; devengos, base de cotización, SS del trabajador y de la empresa, IRPF, líquido y coste empresa; % de jornada imputado a cada obra; recibo imprimible |
+| Tesorería | `#/tesoreria` | Saldo de bancos y caja, flujo de caja mensual por categoría, previsión de cobros y pagos a 3 meses, movimientos manuales (préstamos, comisiones, aportaciones…) |
+| Costes de obra | `#/obras` | Rentabilidad de cada obra: ingreso frente a materiales, subcontratas, mano de obra y otros gastos; presupuesto frente a coste estimado del inventario |
+| Impuestos | `#/impuestos` | Modelos 303 (IVA), 111 (retenciones), 115 (alquileres), Seguridad Social mensual, estimación del Impuesto sobre Sociedades y calendario fiscal; registro del pago de cada liquidación |
+| Balance y resultados | `#/resultados` | Cuenta de pérdidas y ganancias (por año o trimestre), balance de situación simplificado e indicadores |
+
+Todo está conectado: los cobros de clientes y los pagos de compras y nóminas alimentan la tesorería; las facturas emitidas y las compras alimentan el IVA; las nóminas, la Seguridad Social y el modelo 111.
+
+**Puesta en marcha:** ejecuta una vez `supabase_finanzas.sql` en Supabase (SQL Editor). El script solo añade tablas y no borra nada. Después, en *Configuración*, indica el saldo inicial de bancos y caja y revisa los tipos de cotización y del Impuesto sobre Sociedades.
+
+> Las cifras fiscales y de nóminas son orientativas (no aplican topes de cotización ni ajustes fiscales). Conviene revisarlas con la gestoría antes de presentar los modelos.
+
 ## Plantillas Word (.docx)
 
 El diseño de presupuestos, facturas y recibos se hace en **Word**, no en el código:
